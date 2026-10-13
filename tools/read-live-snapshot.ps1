@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-only
-param([switch]$PulseCore0, [switch]$TestDmaAllocation)
+param([switch]$PulseCore0, [switch]$TestDmaAllocation, [string]$StageFirmware)
 $ErrorActionPreference = 'Stop'
-if ($PulseCore0 -and $TestDmaAllocation) { throw 'Select only one diagnostic command' }
+$selected = 0
+if ($PulseCore0) { $selected++ }
+if ($TestDmaAllocation) { $selected++ }
+if ($StageFirmware) { $selected++ }
+if ($selected -gt 1) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
 using System.Runtime.InteropServices;
@@ -15,6 +19,8 @@ public static class SofProbeClient {
     private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError=true)]
     private static extern bool DeviceIoControl(SafeFileHandle handle, uint code, IntPtr input, uint inputSize, [Out] byte[] output, uint outputSize, out uint returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", EntryPoint="DeviceIoControl", SetLastError=true)]
+    private static extern bool DeviceIoControlWithBuffer(SafeFileHandle handle, uint code, [In] byte[] input, uint inputSize, [Out] byte[] output, uint outputSize, out uint returned, IntPtr overlapped);
     public static string[] Paths() {
         Guid guid = new Guid("F6B7AB70-381C-4A67-A85C-4A006A7B01DD");
         uint length;
@@ -25,12 +31,15 @@ public static class SofProbeClient {
         if (result != 0) throw new Exception("Interface list: CONFIGRET " + result);
         return new string(buffer).Split(new char[]{'\0'}, StringSplitOptions.RemoveEmptyEntries);
     }
-    public static uint[] Exchange(string path, uint code) {
-        using (SafeFileHandle handle = CreateFileW(path, code == 0x22A004U ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+    public static uint[] Exchange(string path, uint code, byte[] input) {
+        using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             byte[] bytes = new byte[32];
             uint returned;
-            if (!DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero))
+            bool ok = input == null
+                ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
+                : DeviceIoControlWithBuffer(handle, code, input, (uint)input.Length, bytes, (uint)bytes.Length, out returned, IntPtr.Zero);
+            if (!ok)
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             if (returned != bytes.Length) throw new Exception("Unexpected snapshot length: " + returned);
             uint[] words = new uint[8];
@@ -43,10 +52,18 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } else { [uint32]0x226000 }
-$values = [SofProbeClient]::Exchange($paths[0], $code)
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } else { [uint32]0x226000 }
+$inputBytes = $null
+if ($StageFirmware) {
+    $expectedHash = '8433390E4ABFE40B251FF3DEC41604E7B817501D1097D51AA2F51C11444D3BF0'
+    if ((Get-FileHash -LiteralPath $StageFirmware -Algorithm SHA256).Hash -ne $expectedHash) {
+        throw 'The IPC3 image hash does not match the locally validated N100 firmware'
+    }
+    $inputBytes = [IO.File]::ReadAllBytes($StageFirmware)
+}
+$values = [SofProbeClient]::Exchange($paths[0], $code, $inputBytes)
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
-if ($TestDmaAllocation) {
+if ($TestDmaAllocation -or $StageFirmware) {
     [pscustomobject]@{
         Version = $values[0]
         BdlLogicalAddress = ('0x{0:X8}{1:X8}' -f $values[2], $values[1])

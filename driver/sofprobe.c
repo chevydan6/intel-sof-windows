@@ -17,6 +17,8 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     PHYSICAL_ADDRESS HdaStart;
     PHYSICAL_ADDRESS DspStart;
     WDFDMAENABLER DmaEnabler;
+    WDFCOMMONBUFFER FirmwareBdl;
+    WDFCOMMONBUFFER FirmwarePayload;
     BOOLEAN ResourcesReady;
     BOOLEAN PowerPulseAttempted;
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
@@ -90,6 +92,101 @@ SofProbeTestDmaAllocation(_In_ WDFREQUEST Request,
     result->BdlBytes = 128;
     result->PayloadBytes = 524288;
     result->BdlEntryBytes = sizeof(*entry);
+    WdfRequestSetInformation(Request, sizeof(*result));
+
+finish:
+    if (payload != NULL) WdfObjectDelete(payload);
+    if (bdl != NULL) WdfObjectDelete(bdl);
+    WdfRequestComplete(Request, status);
+}
+
+static VOID
+SofProbeStageFirmware(_In_ WDFREQUEST Request,
+                      _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                      _In_ size_t OutputBufferLength,
+                      _In_ size_t InputBufferLength)
+{
+    typedef struct _IPC3_MANIFEST_HEADER {
+        ULONG Magic;
+        ULONG FullSize;
+        ULONG HeaderSize;
+        ULONG Version;
+    } IPC3_MANIFEST_HEADER;
+    IPC3_MANIFEST_HEADER header;
+    PUCHAR image;
+    PSOFPROBE_DMA_ALLOCATION_RESULT result;
+    WDFCOMMONBUFFER bdl = NULL;
+    WDFCOMMONBUFFER payload = NULL;
+    PHYSICAL_ADDRESS bdlAddress;
+    PHYSICAL_ADDRESS payloadAddress;
+    SOFPROBE_BDL_ENTRY *entry;
+    NTSTATUS status;
+
+    if (Context->FirmwarePayload != NULL) {
+        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
+        return;
+    }
+    if (InputBufferLength != 525056 ||
+        OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength,
+                                           (PVOID *)&image, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    RtlCopyMemory(&header, image, sizeof(header));
+    if (header.Magic != 0x6e614d58 || header.FullSize != 768 ||
+        header.HeaderSize != 16 || header.Version != 0x01000000) {
+        WdfRequestComplete(Request, STATUS_INVALID_IMAGE_FORMAT);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    status = WdfCommonBufferCreate(Context->DmaEnabler, 128,
+                                   WDF_NO_OBJECT_ATTRIBUTES, &bdl);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = WdfCommonBufferCreate(Context->DmaEnabler, 524288,
+                                   WDF_NO_OBJECT_ATTRIBUTES, &payload);
+    if (!NT_SUCCESS(status)) goto finish;
+    bdlAddress = WdfCommonBufferGetAlignedLogicalAddress(bdl);
+    payloadAddress = WdfCommonBufferGetAlignedLogicalAddress(payload);
+    if ((bdlAddress.QuadPart & 127) != 0 ||
+        (payloadAddress.QuadPart & 127) != 0) {
+        status = STATUS_DATATYPE_MISALIGNMENT;
+        goto finish;
+    }
+    RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(bdl), 128);
+    RtlCopyMemory(WdfCommonBufferGetAlignedVirtualAddress(payload),
+                  image + header.FullSize, 524288);
+    entry = (SOFPROBE_BDL_ENTRY *)WdfCommonBufferGetAlignedVirtualAddress(bdl);
+    entry[0].Address = (ULONGLONG)payloadAddress.QuadPart;
+    entry[0].Length = 262144;
+    entry[0].Flags = 0;
+    entry[1].Address = (ULONGLONG)payloadAddress.QuadPart + 262144;
+    entry[1].Length = 262144;
+    entry[1].Flags = 0;
+
+    // METHOD_BUFFERED uses the same system buffer for input and output, so
+    // populate the response only after copying the image into DMA memory.
+    result->Version = 1;
+    result->BdlAddressLow = bdlAddress.LowPart;
+    result->BdlAddressHigh = bdlAddress.HighPart;
+    result->PayloadAddressLow = payloadAddress.LowPart;
+    result->PayloadAddressHigh = payloadAddress.HighPart;
+    result->BdlBytes = 128;
+    result->PayloadBytes = 524288;
+    result->BdlEntryBytes = sizeof(*entry);
+    Context->FirmwareBdl = bdl;
+    Context->FirmwarePayload = payload;
+    bdl = NULL;
+    payload = NULL;
     WdfRequestSetInformation(Request, sizeof(*result));
 
 finish:
@@ -419,7 +516,8 @@ SofProbeEvtIoDeviceControl(
 
     if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
         IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0 &&
-        IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION) {
+        IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION &&
+        IoControlCode != IOCTL_SOFPROBE_STAGE_IPC3_FIRMWARE) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -435,6 +533,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_TEST_DMA_ALLOCATION) {
         SofProbeTestDmaAllocation(Request, context, OutputBufferLength,
                                   InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_STAGE_IPC3_FIRMWARE) {
+        SofProbeStageFirmware(Request, context, OutputBufferLength,
+                              InputBufferLength);
         return;
     }
     if (InputBufferLength != 0) {
@@ -485,7 +588,18 @@ SofProbeEvtReleaseHardware(
     )
 {
     UNREFERENCED_PARAMETER(ResourcesTranslated);
-    SofProbeGetContext(Device)->ResourcesReady = FALSE;
+    {
+        PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+        context->ResourcesReady = FALSE;
+        if (context->FirmwarePayload != NULL) {
+            WdfObjectDelete(context->FirmwarePayload);
+            context->FirmwarePayload = NULL;
+        }
+        if (context->FirmwareBdl != NULL) {
+            WdfObjectDelete(context->FirmwareBdl);
+            context->FirmwareBdl = NULL;
+        }
+    }
     return STATUS_SUCCESS;
 }
 
