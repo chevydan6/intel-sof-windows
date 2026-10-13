@@ -115,7 +115,8 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACXDATAFORMATLIST formats;
     ACXJACK jack = NULL;
     WDF_OBJECT_ATTRIBUTES attributes;
-    UNICODE_STRING name = RTL_CONSTANT_STRING(L"N100 SOF Speakers");
+    // Match the reference string in sofplay.inx AddInterface directives.
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"Speaker0");
     NTSTATUS status;
 
     *Circuit = NULL;
