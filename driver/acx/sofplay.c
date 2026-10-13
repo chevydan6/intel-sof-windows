@@ -288,26 +288,40 @@ fail:
 }
 
 #ifdef SOFPLAY_INTEGRATED
+static VOID
+SofPlayReleasePacketMemory(_In_ PACX_RTPACKET Packets,
+                           _In_ ULONG PacketCount)
+{
+    ULONG i;
+    for (i = 0; i < PacketCount; ++i) {
+        PMDL mdl = Packets[i].RtPacketBuffer.u.MdlType.Mdl;
+        if (mdl != NULL) {
+            PVOID buffer = MmGetMdlVirtualAddress(mdl);
+            IoFreeMdl(mdl);
+            ExFreePoolWithTag(buffer, SOFPLAY_PACKET_TAG);
+        }
+    }
+    ExFreePoolWithTag(Packets, SOFPLAY_PACKET_TAG);
+}
+
 VOID
 SofPlayEvtStreamCleanup(_In_ WDFOBJECT Object)
 {
     PSOFPLAY_STREAM_CONTEXT context =
         SofPlayGetStreamContext((ACXSTREAM)Object);
+    PACX_RTPACKET packets;
+    ULONG packetCount;
     if (context->Timer != NULL)
         WdfTimerStop(context->Timer, TRUE);
     if (context->Device != NULL)
         SofProbeAcxSetTimer(context->Device, NULL);
-    if (context->Packets != NULL) {
-        ULONG i;
-        for (i = 0; i < context->PacketCount; ++i) {
-            PMDL mdl = context->Packets[i].RtPacketBuffer.u.MdlType.Mdl;
-            if (mdl != NULL) {
-                PVOID buffer = MmGetMdlVirtualAddress(mdl);
-                IoFreeMdl(mdl);
-                ExFreePoolWithTag(buffer, SOFPLAY_PACKET_TAG);
-            }
-        }
-        ExFreePoolWithTag(context->Packets, SOFPLAY_PACKET_TAG);
+    packets = (PACX_RTPACKET)InterlockedExchangePointer(
+        (PVOID volatile *)&context->Packets, NULL);
+    if (packets != NULL) {
+        packetCount = context->PacketCount;
+        context->PacketCount = 0;
+        context->PacketSize = 0;
+        SofPlayReleasePacketMemory(packets, packetCount);
     }
     if (context->Device != NULL) SofProbeAcxReleaseStream(context->Device);
 }
@@ -331,9 +345,6 @@ SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
         sizeof(ACX_RTPACKET) * PacketCount, SOFPLAY_PACKET_TAG);
     if (packets == NULL) return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(packets, sizeof(ACX_RTPACKET) * PacketCount);
-    context->Packets = packets;
-    context->PacketCount = PacketCount;
-    context->PacketSize = PacketSize;
     for (i = 0; i < PacketCount; ++i) {
         PVOID buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED,
                                        allocationBytes, SOFPLAY_PACKET_TAG);
@@ -351,10 +362,13 @@ SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
         packets[i].RtPacketSize = PacketSize;
         packets[i].RtPacketOffset = 0;
     }
+    context->PacketCount = PacketCount;
+    context->PacketSize = PacketSize;
+    InterlockedExchangePointer((PVOID volatile *)&context->Packets, packets);
     *Packets = packets;
     return STATUS_SUCCESS;
 allocation_failed:
-    SofPlayEvtFreePackets(Stream, packets, PacketCount);
+    SofPlayReleasePacketMemory(packets, PacketCount);
     return STATUS_INSUFFICIENT_RESOURCES;
 }
 
@@ -364,21 +378,15 @@ SofPlayEvtFreePackets(_In_ ACXSTREAM Stream,
                        _In_ ULONG PacketCount)
 {
     PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
-    ULONG i;
-    if (Packets != context->Packets || PacketCount != context->PacketCount)
+    if (Packets == NULL || Packets != context->Packets ||
+        PacketCount != context->PacketCount)
         return;
-    for (i = 0; i < PacketCount; ++i) {
-        PMDL mdl = Packets[i].RtPacketBuffer.u.MdlType.Mdl;
-        if (mdl != NULL) {
-            PVOID buffer = MmGetMdlVirtualAddress(mdl);
-            IoFreeMdl(mdl);
-            ExFreePoolWithTag(buffer, SOFPLAY_PACKET_TAG);
-        }
-    }
-    ExFreePoolWithTag(Packets, SOFPLAY_PACKET_TAG);
-    context->Packets = NULL;
+    if (InterlockedCompareExchangePointer(
+        (PVOID volatile *)&context->Packets, NULL, Packets) != Packets)
+        return;
     context->PacketCount = 0;
     context->PacketSize = 0;
+    SofPlayReleasePacketMemory(Packets, PacketCount);
 }
 
 NTSTATUS
