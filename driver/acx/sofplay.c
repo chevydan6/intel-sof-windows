@@ -175,7 +175,8 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
         status = STATUS_INSUFFICIENT_RESOURCES;
         goto finish;
     }
-    status = AcxDataFormatListAddDataFormat(formats, format);
+    // Windows needs an active default format to initialize the endpoint.
+    status = AcxDataFormatListAssignDefaultDataFormat(formats, format);
     if (!NT_SUCCESS(status)) goto finish;
     status = AcxCircuitAddPins(circuit, pins, RTL_NUMBER_OF(pins));
     if (!NT_SUCCESS(status)) goto finish;
