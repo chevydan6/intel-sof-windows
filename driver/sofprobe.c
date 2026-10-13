@@ -360,13 +360,15 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                      _In_ BOOLEAN RunFirmwareDma,
                      _In_ BOOLEAN CaptureIpc3Ready,
                      _In_ BOOLEAN CaptureIpc3Info,
-                     _In_ BOOLEAN AcknowledgeIpc3Ready)
+                     _In_ BOOLEAN AcknowledgeIpc3Ready,
+                     _In_ BOOLEAN QueryIpc3Memory)
 {
     PSOFPROBE_ROM_ENTRY_RESULT result;
     PSOFPROBE_FIRMWARE_DMA_RESULT dmaResult = NULL;
     PSOFPROBE_IPC3_READY_RESULT readyResult = NULL;
     PSOFPROBE_IPC3_INFO_RESULT infoResult = NULL;
     PSOFPROBE_IPC3_ACK_RESULT ackResult = NULL;
+    PSOFPROBE_IPC3_MEMORY_RESULT memoryResult = NULL;
     PUCHAR hda = NULL;
     PUCHAR dsp = NULL;
     PULONG outputControl;
@@ -393,8 +395,10 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     BOOLEAN fwEntered = FALSE;
     ULONG sspUnavailableMask = 0;
     ULONGLONG firmwareDeadline;
-    size_t dspMapBytes = CaptureIpc3Ready ? 0x82000 : 0x81000;
-    size_t resultBytes = AcknowledgeIpc3Ready ? sizeof(SOFPROBE_IPC3_ACK_RESULT)
+    size_t dspMapBytes = QueryIpc3Memory ? 0x100000
+                         : (CaptureIpc3Ready ? 0x82000 : 0x81000);
+    size_t resultBytes = QueryIpc3Memory ? sizeof(SOFPROBE_IPC3_MEMORY_RESULT)
+                       : AcknowledgeIpc3Ready ? sizeof(SOFPROBE_IPC3_ACK_RESULT)
                        : CaptureIpc3Info ? sizeof(SOFPROBE_IPC3_INFO_RESULT)
                        : CaptureIpc3Ready ? sizeof(SOFPROBE_IPC3_READY_RESULT)
                        : (RunFirmwareDma ? sizeof(SOFPROBE_FIRMWARE_DMA_RESULT)
@@ -420,6 +424,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     if (CaptureIpc3Ready) readyResult = (PSOFPROBE_IPC3_READY_RESULT)result;
     if (CaptureIpc3Info) infoResult = (PSOFPROBE_IPC3_INFO_RESULT)result;
     if (AcknowledgeIpc3Ready) ackResult = (PSOFPROBE_IPC3_ACK_RESULT)result;
+    if (QueryIpc3Memory) memoryResult = (PSOFPROBE_IPC3_MEMORY_RESULT)result;
     if (RunFirmwareDma) {
         RtlZeroMemory(&bus, sizeof(bus));
         status = WdfFdoQueryForInterface(Device, &GUID_BUS_INTERFACE_STANDARD,
@@ -703,6 +708,43 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                 ackResult->HipctdaAfterAck =
                     READ_REGISTER_ULONG((PULONG)(dsp + 0xc4));
                 if (i == 50) result->Result = 17;
+            }
+            if (QueryIpc3Memory && result->Result == 0) {
+                // The validated XMan window descriptor places the IPC3
+                // downbox at DSP BAR + 0xa0000 (8 KiB). Ask for a read-only
+                // memory-usage report with an eight-byte command header.
+                WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0000), 8);
+                WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0004), 0xd0010000);
+                KeMemoryBarrier();
+                WRITE_REGISTER_ULONG(hipcidr, 0x80000000);
+                for (i = 0; i < 500; ++i) {
+                    current = READ_REGISTER_ULONG(hipcida);
+                    if (current & 0x80000000) break;
+                    (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+                }
+                memoryResult->ReplyPolls = i;
+                memoryResult->ReplyDoorbell = READ_REGISTER_ULONG(hipcida);
+                if (i == 500) {
+                    result->Result = 18;
+                } else {
+                    memoryResult->ReplySize =
+                        READ_REGISTER_ULONG((PULONG)(dsp + 0xa0000));
+                    memoryResult->ReplyCommand =
+                        READ_REGISTER_ULONG((PULONG)(dsp + 0xa0004));
+                    memoryResult->ReplyError =
+                        (LONG)READ_REGISTER_ULONG((PULONG)(dsp + 0xa0008));
+                    if (memoryResult->ReplySize < 12 ||
+                        memoryResult->ReplySize >
+                            sizeof(memoryResult->ReplyWords) ||
+                        (memoryResult->ReplySize & 3) != 0) {
+                        result->Result = 19;
+                    } else {
+                        for (i = 0; i < memoryResult->ReplySize / sizeof(ULONG); ++i)
+                            memoryResult->ReplyWords[i] = READ_REGISTER_ULONG(
+                                (PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)));
+                    }
+                    WRITE_REGISTER_ULONG(hipcida, 0x80000000); // W1C DONE
+                }
             }
         }
         dmaResult->OutputPosition = READ_REGISTER_ULONG((PULONG)(hda + 0x164));
@@ -1721,7 +1763,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_TEST_FIRMWARE_DMA &&
         IoControlCode != IOCTL_SOFPROBE_TEST_IPC3_READY &&
         IoControlCode != IOCTL_SOFPROBE_READ_IPC3_INFO &&
-        IoControlCode != IOCTL_SOFPROBE_ACK_IPC3_READY) {
+        IoControlCode != IOCTL_SOFPROBE_ACK_IPC3_READY &&
+        IoControlCode != IOCTL_SOFPROBE_QUERY_IPC3_MEMORY) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -1776,27 +1819,38 @@ SofProbeEvtIoDeviceControl(
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_ROM_ENTRY) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, FALSE, FALSE, FALSE, FALSE);
+                             InputBufferLength, FALSE, FALSE, FALSE, FALSE,
+                             FALSE);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_FIRMWARE_DMA) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, TRUE, FALSE, FALSE, FALSE);
+                             InputBufferLength, TRUE, FALSE, FALSE, FALSE,
+                             FALSE);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_IPC3_READY) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, TRUE, TRUE, FALSE, FALSE);
+                             InputBufferLength, TRUE, TRUE, FALSE, FALSE,
+                             FALSE);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_READ_IPC3_INFO) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, TRUE, TRUE, TRUE, FALSE);
+                             InputBufferLength, TRUE, TRUE, TRUE, FALSE,
+                             FALSE);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_ACK_IPC3_READY) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, TRUE, TRUE, TRUE, TRUE);
+                             InputBufferLength, TRUE, TRUE, TRUE, TRUE,
+                             FALSE);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_QUERY_IPC3_MEMORY) {
+        SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
+                             InputBufferLength, TRUE, TRUE, TRUE, TRUE,
+                             TRUE);
         return;
     }
     if (InputBufferLength != 0) {
