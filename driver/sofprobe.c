@@ -4,6 +4,8 @@
 
 #include <ntddk.h>
 #include <wdf.h>
+#include <initguid.h>
+#include <wdmguid.h>
 #include "sofprobe-ioctl.h"
 
 DRIVER_INITIALIZE DriverEntry;
@@ -340,6 +342,53 @@ restore:
         result->Result = 3;
     }
     MmUnmapIoSpace(hda, 0x1000);
+    WdfRequestSetInformation(Request, sizeof(*result));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
+}
+
+static VOID
+SofProbeReadPciConfig(_In_ WDFREQUEST Request,
+                      _In_ WDFDEVICE Device,
+                      _In_ size_t OutputBufferLength,
+                      _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_PCI_SNAPSHOT result;
+    BUS_INTERFACE_STANDARD bus;
+    UCHAR config[16];
+    ULONG bytesRead;
+    NTSTATUS status;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    RtlZeroMemory(&bus, sizeof(bus));
+    status = WdfFdoQueryForInterface(Device, &GUID_BUS_INTERFACE_STANDARD,
+                                     (PINTERFACE)&bus, sizeof(bus), 1, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    RtlZeroMemory(config, sizeof(config));
+    bytesRead = bus.GetBusData(bus.Context, PCI_WHICHSPACE_CONFIG,
+                               config, 0, sizeof(config));
+    bus.InterfaceDereference(bus.Context);
+    if (bytesRead != sizeof(config)) {
+        WdfRequestComplete(Request, STATUS_DEVICE_DATA_ERROR);
+        return;
+    }
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    RtlCopyMemory(&result->VendorDevice, config, sizeof(ULONG));
+    RtlCopyMemory(&result->CommandStatus, config + 4, sizeof(ULONG));
+    RtlCopyMemory(&result->RevisionClass, config + 8, sizeof(ULONG));
+    RtlCopyMemory(&result->HeaderInfo, config + 12, sizeof(ULONG));
     WdfRequestSetInformation(Request, sizeof(*result));
     WdfRequestComplete(Request, STATUS_SUCCESS);
 }
@@ -935,7 +984,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_READ_STREAM0 &&
         IoControlCode != IOCTL_SOFPROBE_TEST_STREAM_SETUP &&
         IoControlCode != IOCTL_SOFPROBE_READ_BOOT_PREFLIGHT &&
-        IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_SETUP) {
+        IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_SETUP &&
+        IoControlCode != IOCTL_SOFPROBE_READ_PCI_CONFIG) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -976,6 +1026,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_TEST_CAPTURE_SETUP) {
         SofProbeTestCaptureSetup(Request, context, OutputBufferLength,
                                  InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_READ_PCI_CONFIG) {
+        SofProbeReadPciConfig(Request, device, OutputBufferLength,
+                              InputBufferLength);
         return;
     }
     if (InputBufferLength != 0) {

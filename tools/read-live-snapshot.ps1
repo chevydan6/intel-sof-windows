@@ -2,7 +2,7 @@
 param([switch]$PulseCore0, [switch]$TestDmaAllocation,
       [string]$StageFirmware, [switch]$ReadStream0,
       [switch]$TestStreamSetup, [switch]$ReadBootPreflight,
-      [switch]$TestCaptureSetup)
+      [switch]$TestCaptureSetup, [switch]$ReadPciConfig)
 $ErrorActionPreference = 'Stop'
 $selected = 0
 if ($PulseCore0) { $selected++ }
@@ -12,6 +12,7 @@ if ($ReadStream0) { $selected++ }
 if ($TestStreamSetup) { $selected++ }
 if ($ReadBootPreflight) { $selected++ }
 if ($TestCaptureSetup) { $selected++ }
+if ($ReadPciConfig) { $selected++ }
 if ($selected -gt 1) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
@@ -59,7 +60,7 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } elseif ($ReadBootPreflight) { [uint32]0x226018 } elseif ($TestCaptureSetup) { [uint32]0x22A01C } else { [uint32]0x226000 }
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } elseif ($ReadBootPreflight) { [uint32]0x226018 } elseif ($TestCaptureSetup) { [uint32]0x22A01C } elseif ($ReadPciConfig) { [uint32]0x226020 } else { [uint32]0x226000 }
 $inputBytes = $null
 if ($StageFirmware) {
     $expectedHash = '8433390E4ABFE40B251FF3DEC41604E7B817501D1097D51AA2F51C11444D3BF0'
@@ -82,6 +83,19 @@ if ($ReadStream0) {
     return
 }
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
+if ($ReadPciConfig) {
+    [pscustomobject]@{
+        VendorDevice = ('0x{0:X8}' -f $values[1])
+        Command = ('0x{0:X4}' -f ($values[2] -band 0xffff))
+        BusMasterEnabled = [bool]($values[2] -band 4)
+        MemorySpaceEnabled = [bool]($values[2] -band 2)
+        CommandStatus = ('0x{0:X8}' -f $values[2])
+        RevisionClass = ('0x{0:X8}' -f $values[3])
+        HeaderInfo = ('0x{0:X8}' -f $values[4])
+    } | Format-List
+    if ($values[1] -ne 0x54C88086) { throw 'Unexpected PCI audio device' }
+    return
+}
 if ($ReadBootPreflight) {
     [pscustomobject]@{
         Gcap = ('0x{0:X4}' -f $values[1])
