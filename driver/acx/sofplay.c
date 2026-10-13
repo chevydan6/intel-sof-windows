@@ -152,7 +152,7 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
 
     ACX_JACK_CONFIG_INIT(&jackConfig);
     jackConfig.Description.ChannelMapping = KSAUDIO_SPEAKER_STEREO;
-    jackConfig.Description.Color = RGB(0, 0, 0);
+    jackConfig.Description.Color = 0;
     jackConfig.Description.ConnectionType = AcxConnTypeAtapiInternal;
     jackConfig.Description.GeoLocation = AcxGeoLocFront;
     jackConfig.Description.GenLocation = AcxGenLocPrimaryBox;
