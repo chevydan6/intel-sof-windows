@@ -447,7 +447,7 @@ SofProbeStageFirmware(_In_ WDFREQUEST Request,
                       _In_ size_t InputBufferLength)
 {
     PUCHAR image;
-    PSOFPROBE_DMA_ALLOCATION_RESULT result;
+    PSOFPROBE_DMA_ALLOCATION_RESULT result = NULL;
     NTSTATUS status;
     if (InputBufferLength != 525056 || OutputBufferLength < sizeof(*result)) {
         WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
@@ -2630,7 +2630,7 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
                         _In_ size_t InputBufferLength)
 {
     PSOFPROBE_IPC3_EXCHANGE_REQUEST input;
-    PSOFPROBE_IPC3_SESSION_MEMORY_RESULT result;
+    PSOFPROBE_IPC3_SESSION_MEMORY_RESULT result = NULL;
     NTSTATUS status;
     if (InputBufferLength < FIELD_OFFSET(SOFPROBE_IPC3_EXCHANGE_REQUEST, RequestWords) + 8 ||
         InputBufferLength > sizeof(*input) || OutputBufferLength < sizeof(*result)) {
@@ -2767,14 +2767,6 @@ SofProbeEvtIoDeviceControl(
     PUCHAR dsp = NULL;
     NTSTATUS status;
 
-#ifdef SOFPLAY_INTEGRATED
-    if (IoControlCode != IOCTL_SOFPROBE_ACX_STATUS &&
-        IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
-        IoControlCode != IOCTL_SOFPROBE_READ_STREAM0) {
-        WdfRequestComplete(Request, STATUS_ACCESS_DENIED);
-        return;
-    }
-#endif
     if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
         IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0 &&
         IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION &&
@@ -2802,6 +2794,14 @@ SofProbeEvtIoDeviceControl(
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
+#ifdef SOFPLAY_INTEGRATED
+    if (IoControlCode != IOCTL_SOFPROBE_ACX_STATUS &&
+        IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
+        IoControlCode != IOCTL_SOFPROBE_READ_STREAM0) {
+        WdfRequestComplete(Request, STATUS_ACCESS_DENIED);
+        return;
+    }
+#endif
     if (!context->ResourcesReady) {
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
         return;
