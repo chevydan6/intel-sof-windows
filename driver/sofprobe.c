@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Development probe for bounded HDA/DSP observations and opt-in tests.
-// Capture DMA is limited to a short ring transfer; no DSP core is released
-// and no firmware is run by this probe.
+// Hardware tests are opt-in and one-shot, with bounded waits and restoration.
 
 #include <ntddk.h>
 #include <wdf.h>
@@ -27,6 +26,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN CaptureSetupAttempted;
     BOOLEAN CaptureDmaAttempted;
     BOOLEAN RomEntryAttempted;
+    BOOLEAN UnstoppedFirmwareDma;
     WDFCOMMONBUFFER UnstoppedCaptureBdl;
     WDFCOMMONBUFFER UnstoppedCapturePayload;
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
@@ -353,11 +353,14 @@ restore:
 
 static VOID
 SofProbeTestRomEntry(_In_ WDFREQUEST Request,
+                     _In_ WDFDEVICE Device,
                      _In_ PSOFPROBE_DEVICE_CONTEXT Context,
                      _In_ size_t OutputBufferLength,
-                     _In_ size_t InputBufferLength)
+                     _In_ size_t InputBufferLength,
+                     _In_ BOOLEAN RunFirmwareDma)
 {
     PSOFPROBE_ROM_ENTRY_RESULT result;
+    PSOFPROBE_FIRMWARE_DMA_RESULT dmaResult = NULL;
     PUCHAR hda = NULL;
     PUCHAR dsp = NULL;
     PULONG outputControl;
@@ -370,12 +373,19 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     ULONG current;
     ULONG i;
     PHYSICAL_ADDRESS bdlAddress;
+    BUS_INTERFACE_STANDARD bus;
+    UCHAR pciConfig[6];
+    ULONG vendorDevice;
+    USHORT pciCommand;
     LARGE_INTEGER delay;
     BOOLEAN powerRequested = FALSE;
     BOOLEAN sspTouched = FALSE;
+    BOOLEAN dmaStarted = FALSE;
+    size_t resultBytes = RunFirmwareDma ? sizeof(SOFPROBE_FIRMWARE_DMA_RESULT)
+                                        : sizeof(SOFPROBE_ROM_ENTRY_RESULT);
     NTSTATUS status;
 
-    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+    if (InputBufferLength != 0 || OutputBufferLength < resultBytes) {
         WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
         return;
     }
@@ -387,9 +397,30 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
         return;
     }
-    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+    status = WdfRequestRetrieveOutputBuffer(Request, resultBytes,
                                             (PVOID *)&result, NULL);
     if (!NT_SUCCESS(status)) goto finish;
+    if (RunFirmwareDma) dmaResult = (PSOFPROBE_FIRMWARE_DMA_RESULT)result;
+    if (RunFirmwareDma) {
+        RtlZeroMemory(&bus, sizeof(bus));
+        status = WdfFdoQueryForInterface(Device, &GUID_BUS_INTERFACE_STANDARD,
+                                         (PINTERFACE)&bus, sizeof(bus), 1, NULL);
+        if (!NT_SUCCESS(status)) goto finish;
+        RtlZeroMemory(pciConfig, sizeof(pciConfig));
+        i = bus.GetBusData(bus.Context, PCI_WHICHSPACE_CONFIG,
+                           pciConfig, 0, sizeof(pciConfig));
+        bus.InterfaceDereference(bus.Context);
+        if (i != sizeof(pciConfig)) {
+            status = STATUS_DEVICE_DATA_ERROR;
+            goto finish;
+        }
+        RtlCopyMemory(&vendorDevice, pciConfig, sizeof(vendorDevice));
+        RtlCopyMemory(&pciCommand, pciConfig + 4, sizeof(pciCommand));
+        if (vendorDevice != 0x54c88086 || (pciCommand & 6) != 6) {
+            status = STATUS_DEVICE_CONFIGURATION_ERROR;
+            goto finish;
+        }
+    }
     bdlAddress = WdfCommonBufferGetAlignedLogicalAddress(Context->FirmwareBdl);
     if ((bdlAddress.QuadPart & 127) != 0) {
         status = STATUS_DATATYPE_MISALIGNMENT;
@@ -413,6 +444,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     if (READ_REGISTER_USHORT((PUSHORT)hda) != 0x9701 ||
         READ_REGISTER_ULONG((PULONG)(hda + 0x08)) != 1 ||
         beforeOutputControl != 0x00040000 || beforePpctl != 0x40000000 ||
+        READ_REGISTER_UCHAR(hda + 0x163) != 0 ||
         READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 0 ||
         READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 0 ||
         READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0 ||
@@ -425,7 +457,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
         status = STATUS_DEVICE_CONFIGURATION_ERROR;
         goto finish;
     }
-    RtlZeroMemory(result, sizeof(*result));
+    RtlZeroMemory(result, resultBytes);
     result->Version = 1;
     result->BeforeAdspcs = READ_REGISTER_ULONG(adspcs);
     result->RomControl = 0x81004000;
@@ -541,7 +573,57 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     result->RomError = READ_REGISTER_ULONG((PULONG)(dsp + 0x80004));
     if (i == 300) result->Result = 7;
 
+    if (RunFirmwareDma && result->Result == 0) {
+        // The staged WDF common buffer stays alive for the whole transfer.
+        // ROM initialization has been observed before output DMA can start.
+        KeMemoryBarrier();
+        WRITE_REGISTER_ULONG(outputControl, 0x0014001e);
+        dmaStarted = TRUE;
+        for (i = 0; i < 100; ++i) {
+            if (READ_REGISTER_ULONG(outputControl) & 2) break;
+            KeStallExecutionProcessor(5);
+        }
+        dmaResult->RunningOutputControl = READ_REGISTER_ULONG(outputControl);
+        if (i == 100) result->Result = 9;
+        if (result->Result == 0) {
+            // Linux allows up to 3 seconds for base firmware to enter.
+            for (i = 0; i < 3000; ++i) {
+                current = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
+                if ((current & 0x00ffffff) == 5) break;
+                if (READ_REGISTER_UCHAR(hda + 0x163) & 0x18) {
+                    result->Result = 10;
+                    break;
+                }
+                (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+            }
+            dmaResult->FirmwarePolls = i;
+            dmaResult->FirmwareStatus = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
+            dmaResult->FirmwareError = READ_REGISTER_ULONG((PULONG)(dsp + 0x80004));
+            if (i == 3000 && result->Result == 0) result->Result = 11;
+        }
+        dmaResult->OutputPosition = READ_REGISTER_ULONG((PULONG)(hda + 0x164));
+        dmaResult->OutputStatus = READ_REGISTER_UCHAR(hda + 0x163);
+    }
+
 cleanup:
+    if (dmaStarted) {
+        WRITE_REGISTER_UCHAR(hda + 0x160, 0);
+        for (i = 0; i < 300; ++i) {
+            if ((READ_REGISTER_UCHAR(hda + 0x160) & 2) == 0) break;
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+        dmaResult->StopPolls = i;
+        dmaResult->StoppedOutputControl = READ_REGISTER_ULONG(outputControl);
+        if (i == 300) {
+            // Do not detach the BDL or free memory that hardware may own.
+            Context->UnstoppedFirmwareDma = TRUE;
+            result->Result = 12;
+            WdfRequestSetInformation(Request, resultBytes);
+            status = STATUS_SUCCESS;
+            goto finish;
+        }
+        WRITE_REGISTER_UCHAR(hda + 0x163, 0x1c);
+    }
     if (powerRequested) {
         if (result->RomStatus == 0 && result->Result != 0 &&
             (result->RunningAdspcs & 0x01000000) != 0) {
@@ -603,7 +685,7 @@ cleanup:
           ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0))) {
         result->Result = 8;
     }
-    WdfRequestSetInformation(Request, sizeof(*result));
+    WdfRequestSetInformation(Request, resultBytes);
     status = STATUS_SUCCESS;
 
 finish:
@@ -1476,7 +1558,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_SETUP &&
         IoControlCode != IOCTL_SOFPROBE_READ_PCI_CONFIG &&
         IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_DMA &&
-        IoControlCode != IOCTL_SOFPROBE_TEST_ROM_ENTRY) {
+        IoControlCode != IOCTL_SOFPROBE_TEST_ROM_ENTRY &&
+        IoControlCode != IOCTL_SOFPROBE_TEST_FIRMWARE_DMA) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -1530,8 +1613,13 @@ SofProbeEvtIoDeviceControl(
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_ROM_ENTRY) {
-        SofProbeTestRomEntry(Request, context, OutputBufferLength,
-                             InputBufferLength);
+        SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
+                             InputBufferLength, FALSE);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_TEST_FIRMWARE_DMA) {
+        SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
+                             InputBufferLength, TRUE);
         return;
     }
     if (InputBufferLength != 0) {
