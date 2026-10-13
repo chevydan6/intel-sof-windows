@@ -14,7 +14,7 @@ passes a separate x64 `InfVerif /w` check. It read the controller's resources,
 interface. A guarded, opt-in [core-0 power test](docs/n100-core0-power-test.md)
 received hardware acknowledgment and restored the powered-off baseline. All
 test packages were removed, and normal boot settings were verified after each
-test. The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, but
+test. The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, and [DMA buffer allocation](docs/n100-dma-allocation-test.md) works, but
 audio still does not work: the driver does not load firmware or expose streams.
 
 ## Why a host driver is needed
