@@ -357,7 +357,7 @@ SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
     PACX_RTPACKET packets;
     ULONG allocationBytes;
     ULONG i;
-    if (PacketCount < 1 || PacketCount > 16 || PacketSize == 0 ||
+    if (PacketCount < 1 || PacketCount > 2 || PacketSize == 0 ||
         PacketSize > 12288 || (PacketSize & 7) != 0 ||
         PacketCount * PacketSize > 49152 || context->Packets != NULL)
         return STATUS_INVALID_PARAMETER;
@@ -381,7 +381,10 @@ SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
         WDF_MEMORY_DESCRIPTOR_INIT_MDL(&packets[i].RtPacketBuffer,
                                        mdl, allocationBytes);
         packets[i].RtPacketSize = PacketSize;
-        packets[i].RtPacketOffset = 0;
+        // ACX maps the separate MDLs into one contiguous client buffer.
+        // Packet 0 must end at its allocation's page boundary so packet 1
+        // can begin immediately after it, without page-rounding padding.
+        packets[i].RtPacketOffset = i == 0 ? allocationBytes - PacketSize : 0;
     }
     context->PacketCount = PacketCount;
     context->PacketSize = PacketSize;
