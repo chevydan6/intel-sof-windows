@@ -27,6 +27,12 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPLAY_DEVICE_CONTEXT, SofPlayGetContext)
 static const GUID SofPlaySpeakerComponent =
     { 0x39edc32d, 0xd57e, 0x47a9,
       { 0x84, 0x20, 0xbb, 0xa1, 0x08, 0x78, 0x5c, 0xf0 } };
+static const GUID SofPlayAudioCategory =
+    { 0x6994ad04, 0x93ef, 0x11d0,
+      { 0xa3, 0xcc, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96 } };
+static const GUID SofPlaySpeakerNode =
+    { 0xdff21ce1, 0xf70f, 0x11d0,
+      { 0xb9, 0x17, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96 } };
 
 static KSDATAFORMAT_WAVEFORMATEXTENSIBLE SofPlayPcm48000S32 = {
     {
@@ -75,7 +81,7 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACX_PIN_CONFIG_INIT(&pinConfig);
     pinConfig.Type = AcxPinTypeSink;
     pinConfig.Communication = AcxPinCommunicationSink;
-    pinConfig.Category = &KSCATEGORY_AUDIO;
+    pinConfig.Category = &SofPlayAudioCategory;
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = circuit;
     status = AcxPinCreate(circuit, &attributes, &pinConfig, &pins[0]);
@@ -84,7 +90,7 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACX_PIN_CONFIG_INIT(&pinConfig);
     pinConfig.Type = AcxPinTypeSource;
     pinConfig.Communication = AcxPinCommunicationNone;
-    pinConfig.Category = &KSNODETYPE_SPEAKER;
+    pinConfig.Category = &SofPlaySpeakerNode;
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = circuit;
     status = AcxPinCreate(circuit, &attributes, &pinConfig, &pins[1]);
