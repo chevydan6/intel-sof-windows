@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # One-shot hardware test. Requires the test probe and firmware staged already.
+param([switch]$LeavePrepared)
 $ErrorActionPreference = 'Stop'
 $client = Join-Path $PSScriptRoot 'read-live-snapshot.ps1'
 function Invoke-Probe([string]$name, [string]$argument) {
@@ -60,6 +61,12 @@ try {
     $msg[15]=2; $msg[17]=48000; $msg[18]=0x00020001
     $msg[19]=0x00040004; $msg[20]=12288; $msg[21]=1
     Send-Ipc 'PCM parameters' $msg
+    if ($LeavePrepared) {
+        Write-Host 'Speaker PCM is prepared for an ACX stream.'
+        $tonePrepared = $false
+        $session = $false
+        return
+    }
     Invoke-Probe 'RunTone' '' | Out-Null
     Send-Ipc 'Start speaker stream' ([uint32[]]@(12,0x60040000,0))
     Start-Sleep -Seconds 3

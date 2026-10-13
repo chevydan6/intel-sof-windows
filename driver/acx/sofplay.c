@@ -23,6 +23,8 @@ EVT_ACX_CIRCUIT_CREATE_STREAM SofPlayEvtCreateStream;
 #ifdef SOFPLAY_INTEGRATED
 NTSTATUS SofProbeAcxClaimStream(_In_ WDFDEVICE Device);
 VOID SofProbeAcxReleaseStream(_In_ WDFDEVICE Device);
+VOID SofProbeAcxSetTimer(_In_ WDFDEVICE Device, _In_opt_ WDFTIMER Timer);
+VOID SofProbeAcxRecord(_In_ WDFDEVICE Device, _In_ ULONG Event);
 NTSTATUS SofProbeAcxGetAudioRing(_In_ WDFDEVICE Device,
                                 _Out_ PUCHAR *Buffer,
                                 _Out_ PULONG Bytes);
@@ -231,6 +233,8 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
         WdfObjectDelete(stream);
         return status;
     }
+    SofProbeAcxSetTimer(Device, context->Timer);
+    SofProbeAcxRecord(Device, 1);
     return STATUS_SUCCESS;
 fail:
     SofProbeAcxReleaseStream(Device);
@@ -254,6 +258,10 @@ SofPlayEvtStreamCleanup(_In_ WDFOBJECT Object)
 {
     PSOFPLAY_STREAM_CONTEXT context =
         SofPlayGetStreamContext((ACXSTREAM)Object);
+    if (context->Timer != NULL)
+        WdfTimerStop(context->Timer, TRUE);
+    if (context->Device != NULL)
+        SofProbeAcxSetTimer(context->Device, NULL);
     if (context->Packets != NULL) {
         ULONG i;
         for (i = 0; i < context->PacketCount; ++i) {
@@ -279,7 +287,7 @@ SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
     PACX_RTPACKET packets;
     ULONG allocationBytes;
     ULONG i;
-    if (PacketCount < 2 || PacketCount > 16 || PacketSize == 0 ||
+    if (PacketCount < 1 || PacketCount > 16 || PacketSize == 0 ||
         PacketSize > 12288 || (PacketSize & 7) != 0 ||
         PacketCount * PacketSize > 49152 || context->Packets != NULL)
         return STATUS_INVALID_PARAMETER;
@@ -295,11 +303,11 @@ SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
         PVOID buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED,
                                        allocationBytes, SOFPLAY_PACKET_TAG);
         PMDL mdl;
-        if (buffer == NULL) return STATUS_INSUFFICIENT_RESOURCES;
+        if (buffer == NULL) goto allocation_failed;
         mdl = IoAllocateMdl(buffer, allocationBytes, FALSE, TRUE, NULL);
         if (mdl == NULL) {
             ExFreePoolWithTag(buffer, SOFPLAY_PACKET_TAG);
-            return STATUS_INSUFFICIENT_RESOURCES;
+            goto allocation_failed;
         }
         MmBuildMdlForNonPagedPool(mdl);
         ACX_RTPACKET_INIT(&packets[i]);
@@ -310,6 +318,9 @@ SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
     }
     *Packets = packets;
     return STATUS_SUCCESS;
+allocation_failed:
+    SofPlayEvtFreePackets(Stream, packets, PacketCount);
+    return STATUS_INSUFFICIENT_RESOURCES;
 }
 
 VOID
@@ -383,6 +394,7 @@ SofPlayEvtStreamRun(_In_ ACXSTREAM Stream)
     }
     context->LastPosition = position;
     context->Running = TRUE;
+    SofProbeAcxRecord(context->Device, 2);
     WdfTimerStart(context->Timer, WDF_REL_TIMEOUT_IN_MS(1));
     return STATUS_SUCCESS;
 }
@@ -433,6 +445,7 @@ SofPlayEvtSetPacket(_In_ ACXSTREAM Stream, _In_ ULONG Packet,
         RtlCopyMemory(context->Ring, source + first,
                       context->PacketSize - first);
     KeMemoryBarrier();
+    SofProbeAcxRecord(context->Device, 3);
     return STATUS_SUCCESS;
 }
 
@@ -476,6 +489,7 @@ SofPlayEvtTimer(_In_ WDFTIMER Timer)
         ULONGLONG qpc = (ULONGLONG)KeQueryPerformanceCounter(NULL).QuadPart;
         (VOID)AcxRtStreamNotifyPacketComplete(stream,
                                                context->NextComplete, qpc);
+        SofProbeAcxRecord(context->Device, 4);
         ++context->NextComplete;
     }
 }

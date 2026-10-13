@@ -54,6 +54,11 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     ACXCIRCUIT RenderCircuit;
     BOOLEAN RenderCircuitAdded;
     volatile LONG AcxStreamClaimed;
+    WDFTIMER AcxTimer;
+    volatile LONG AcxStreamsCreated;
+    volatile LONG AcxRunCalls;
+    volatile LONG AcxPacketsSubmitted;
+    volatile LONG AcxPacketsCompleted;
 #endif
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 
@@ -88,6 +93,25 @@ SofProbeAcxReleaseStream(_In_ WDFDEVICE Device)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     InterlockedExchange(&context->AcxStreamClaimed, 0);
+}
+
+VOID
+SofProbeAcxSetTimer(_In_ WDFDEVICE Device, _In_opt_ WDFTIMER Timer)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    context->AcxTimer = Timer;
+}
+
+VOID
+SofProbeAcxRecord(_In_ WDFDEVICE Device, _In_ ULONG Event)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    switch (Event) {
+    case 1: InterlockedIncrement(&context->AcxStreamsCreated); break;
+    case 2: InterlockedIncrement(&context->AcxRunCalls); break;
+    case 3: InterlockedIncrement(&context->AcxPacketsSubmitted); break;
+    case 4: InterlockedIncrement(&context->AcxPacketsCompleted); break;
+    }
 }
 
 NTSTATUS
@@ -2221,6 +2245,10 @@ SofProbeStopSessionHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
         Result->Result = 1;
         return;
     }
+#ifdef SOFPLAY_INTEGRATED
+    if (Context->AcxTimer != NULL)
+        WdfTimerStop(Context->AcxTimer, TRUE);
+#endif
     if (Context->TonePrepared && SofProbeStopToneHardware(Context) != 0)
         Result->CleanupFlags |= 0x100;
     adspcs = (PULONG)(dsp + 0x04);
@@ -2660,7 +2688,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE &&
         IoControlCode != IOCTL_SOFPROBE_PREPARE_TONE &&
         IoControlCode != IOCTL_SOFPROBE_RUN_TONE &&
-        IoControlCode != IOCTL_SOFPROBE_STOP_TONE) {
+        IoControlCode != IOCTL_SOFPROBE_STOP_TONE &&
+        IoControlCode != IOCTL_SOFPROBE_ACX_STATUS) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -2676,7 +2705,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE &&
         IoControlCode != IOCTL_SOFPROBE_PREPARE_TONE &&
         IoControlCode != IOCTL_SOFPROBE_RUN_TONE &&
-        IoControlCode != IOCTL_SOFPROBE_STOP_TONE) {
+        IoControlCode != IOCTL_SOFPROBE_STOP_TONE &&
+        IoControlCode != IOCTL_SOFPROBE_ACX_STATUS) {
         WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
         return;
     }
@@ -2710,6 +2740,39 @@ SofProbeEvtIoDeviceControl(
                                 InputBufferLength);
         return;
     }
+#ifdef SOFPLAY_INTEGRATED
+    if (IoControlCode == IOCTL_SOFPROBE_ACX_STATUS) {
+        PSOFPROBE_ACX_STATUS acx;
+        ULONG position = 0;
+        UCHAR streamStatus = 0;
+        if (InputBufferLength != 0 ||
+            OutputBufferLength < sizeof(SOFPROBE_ACX_STATUS)) {
+            WdfRequestComplete(Request, STATUS_BUFFER_TOO_SMALL);
+            return;
+        }
+        status = WdfRequestRetrieveOutputBuffer(Request,
+            sizeof(SOFPROBE_ACX_STATUS), (PVOID *)&acx, NULL);
+        if (!NT_SUCCESS(status)) {
+            WdfRequestComplete(Request, status);
+            return;
+        }
+        (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
+        acx->Version = 1;
+        acx->StreamsCreated = (ULONG)InterlockedCompareExchange(
+            &context->AcxStreamsCreated, 0, 0);
+        acx->RunCalls = (ULONG)InterlockedCompareExchange(
+            &context->AcxRunCalls, 0, 0);
+        acx->PacketsSubmitted = (ULONG)InterlockedCompareExchange(
+            &context->AcxPacketsSubmitted, 0, 0);
+        acx->PacketsCompleted = (ULONG)InterlockedCompareExchange(
+            &context->AcxPacketsCompleted, 0, 0);
+        acx->HardwarePosition = position;
+        acx->HardwareStatus = streamStatus;
+        WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS,
+                                          sizeof(*acx));
+        return;
+    }
+#endif
     if (IoControlCode == IOCTL_SOFPROBE_PREPARE_TONE ||
         IoControlCode == IOCTL_SOFPROBE_RUN_TONE ||
         IoControlCode == IOCTL_SOFPROBE_STOP_TONE) {
@@ -2843,6 +2906,10 @@ SofProbeEvtD0Exit(
 
     UNREFERENCED_PARAMETER(TargetState);
     if (context->SessionActive) {
+#ifdef SOFPLAY_INTEGRATED
+        if (context->AcxTimer != NULL)
+            WdfTimerStop(context->AcxTimer, TRUE);
+#endif
         SofProbeStopSessionHardware(context, &result);
         KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
                    "SOFPROBE: D0 exit session stop result=%lu flags=%08lx\n",
@@ -2860,6 +2927,10 @@ SofProbeEvtReleaseHardware(
     UNREFERENCED_PARAMETER(ResourcesTranslated);
     {
         PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+#ifdef SOFPLAY_INTEGRATED
+        if (context->AcxTimer != NULL)
+            WdfTimerStop(context->AcxTimer, TRUE);
+#endif
 #ifdef SOFPLAY_INTEGRATED
         if (context->RenderCircuitAdded) {
             NTSTATUS status = AcxDeviceRemoveCircuit(Device,
