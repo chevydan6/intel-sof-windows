@@ -313,7 +313,7 @@ SofProbeTestStreamSetup(_In_ WDFREQUEST Request,
         result->ConfiguredCbl != 524288 || result->ConfiguredLvi != 1 ||
         result->ConfiguredFormat != 0x40 ||
         result->ConfiguredBdlLow != bdlAddress.LowPart ||
-        result->ConfiguredBdlHigh != bdlAddress.HighPart ||
+        result->ConfiguredBdlHigh != (ULONG)bdlAddress.HighPart ||
         result->ConfiguredPpctl != (beforePpctl | 0x80)) {
         result->Result = 2;
     }
