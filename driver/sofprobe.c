@@ -37,10 +37,30 @@ SofProbeReadRegisters(_In_ WDFDEVICE Device,
     ULONG llch;
     ULONG capPointer;
     ULONG capHeader;
+    ULONG capOffsets[10];
+    ULONG capHeaders[10];
+    ULONG capCount;
+    ULONG nextPointer;
+    ULONG previous;
+    ULONG ppFound = 0;
+    ULONG ppctl = 0;
+    ULONG ppsts = 0;
     ULONG adspcs;
     ULONG adspis;
     ULONG hipct;
     ULONG hipci;
+    static PCWSTR const capOffsetNames[10] = {
+        L"SofProbeCap0Offset", L"SofProbeCap1Offset", L"SofProbeCap2Offset",
+        L"SofProbeCap3Offset", L"SofProbeCap4Offset", L"SofProbeCap5Offset",
+        L"SofProbeCap6Offset", L"SofProbeCap7Offset", L"SofProbeCap8Offset",
+        L"SofProbeCap9Offset"
+    };
+    static PCWSTR const capHeaderNames[10] = {
+        L"SofProbeCap0Header", L"SofProbeCap1Header", L"SofProbeCap2Header",
+        L"SofProbeCap3Header", L"SofProbeCap4Header", L"SofProbeCap5Header",
+        L"SofProbeCap6Header", L"SofProbeCap7Header", L"SofProbeCap8Header",
+        L"SofProbeCap9Header"
+    };
 
     // Match the target's HDA and DSP BAR lengths before accessing MMIO.
     if (HdaMemory->u.Memory.Length != 0x4000 ||
@@ -62,12 +82,37 @@ SofProbeReadRegisters(_In_ WDFDEVICE Device,
     gcap2 = READ_REGISTER_USHORT((PUSHORT)(registers + 0x12));
     llch = READ_REGISTER_ULONG((PULONG)(registers + 0x14));
     capPointer = llch & 0xffff;
-    if (capPointer < 0x100 || capPointer > 0x3ffc ||
-        (capPointer & 3) != 0) {
+    nextPointer = capPointer;
+    for (capCount = 0; capCount < 10 && nextPointer != 0; ++capCount) {
+        if (nextPointer < 0x100 || nextPointer > 0x3ffc ||
+            (nextPointer & 3) != 0) {
+            MmUnmapIoSpace(registers, 0x4000);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+        for (previous = 0; previous < capCount; ++previous) {
+            if (capOffsets[previous] == nextPointer) {
+                MmUnmapIoSpace(registers, 0x4000);
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+        }
+        capOffsets[capCount] = nextPointer;
+        capHeaders[capCount] = READ_REGISTER_ULONG((PULONG)(registers + nextPointer));
+        if (((capHeaders[capCount] >> 16) & 0xfff) == 3) {
+            if (nextPointer > 0x3ff4) {
+                MmUnmapIoSpace(registers, 0x4000);
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+            ppFound = 1;
+            ppctl = READ_REGISTER_ULONG((PULONG)(registers + nextPointer + 4));
+            ppsts = READ_REGISTER_ULONG((PULONG)(registers + nextPointer + 8));
+        }
+        nextPointer = capHeaders[capCount] & 0xffff;
+    }
+    if (nextPointer != 0 || capCount == 0) {
         MmUnmapIoSpace(registers, 0x4000);
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
-    capHeader = READ_REGISTER_ULONG((PULONG)(registers + capPointer));
+    capHeader = capHeaders[0];
     MmUnmapIoSpace(registers, 0x4000);
 
     // BAR4 on the Linux HDA/SOF path: read status only, never power cores on.
@@ -90,6 +135,9 @@ SofProbeReadRegisters(_In_ WDFDEVICE Device,
                "SOFPROBE: cap@%04lx=%08lx ADSPCS=%08lx ADSPIS=%08lx "
                "HIPCT=%08lx HIPCI=%08lx\n",
                capPointer, capHeader, adspcs, adspis, hipct, hipci));
+    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+               "SOFPROBE: %lu capabilities PP=%lu PPCTL=%08lx PPSTS=%08lx\n",
+               capCount, ppFound, ppctl, ppsts));
 
     status = WdfDeviceOpenRegistryKey(Device, PLUGPLAY_REGKEY_DEVICE,
                                       KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES,
@@ -106,6 +154,16 @@ SofProbeReadRegisters(_In_ WDFDEVICE Device,
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeLlch", llch);
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeCapOffset", capPointer);
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeCapHeader", capHeader);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeCapCount", capCount);
+    for (previous = 0; previous < capCount && NT_SUCCESS(status); ++previous) {
+        status = SofProbeSaveValue(key, capOffsetNames[previous], capOffsets[previous]);
+        if (NT_SUCCESS(status)) {
+            status = SofProbeSaveValue(key, capHeaderNames[previous], capHeaders[previous]);
+        }
+    }
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbePpFound", ppFound);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbePpCtl", ppctl);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbePpSts", ppsts);
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeAdspcs", adspcs);
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeAdspis", adspis);
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeHipct", hipct);
