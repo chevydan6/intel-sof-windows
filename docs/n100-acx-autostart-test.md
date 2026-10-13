@@ -1,5 +1,7 @@
 # N100 ACX automatic firmware startup
 
+Later listening results and the candidate echo correction are recorded in [the playback echo investigation](n100-acx-echo-test.md). The results below describe the earlier automatic-startup tests.
+
 The previous ACX driver could transfer a Windows WAV only after a PowerShell test staged firmware and prepared the SOF graph while Windows audio services were stopped. The driver now performs those operations from `EvtDeviceD0Entry`, before servicing streams. The firmware image remains a separate locally supplied file at `C:\Windows\System32\drivers\sof-adl-n-ipc3.ri`; it is not bundled in the repository. The driver checks its exact length and SHA-256 (`8433390e4abfe40b251ff3dec41604e7b817501d1097d51aa2f51c11444d3bf0`) before staging any firmware DMA.
 
 The device-start path reuses the bounded hardware routines used by the earlier probe. It builds the same fixed IPC3 host/buffer/SSP1 speaker graph, allocates a silent PCM ring, and configures PCM before declaring the device ready. D0 exit invalidates buffer access, stops playback and firmware, and restores the observed hardware baseline. The ACX build rejects the destructive diagnostic IOCTLs now that it owns its live hardware session; read-only snapshots and ACX status remain available. Standalone probe builds keep their diagnostic commands.
