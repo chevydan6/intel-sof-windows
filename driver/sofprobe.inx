@@ -20,9 +20,9 @@ DefaultDestDir=13
 sofprobe.sys=1,,
 
 [Manufacturer]
-%ProviderName%=Models,NTamd64
+%ProviderName%=Models,NTamd64.10.0...16299
 
-[Models.NTamd64]
+[Models.NTamd64.10.0...16299]
 %DeviceName%=Install,PCI\VEN_8086&DEV_54C8&SUBSYS_00000000
 
 [Install.NT]
