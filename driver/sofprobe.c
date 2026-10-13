@@ -358,11 +358,13 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                      _In_ size_t OutputBufferLength,
                      _In_ size_t InputBufferLength,
                      _In_ BOOLEAN RunFirmwareDma,
-                     _In_ BOOLEAN CaptureIpc3Ready)
+                     _In_ BOOLEAN CaptureIpc3Ready,
+                     _In_ BOOLEAN CaptureIpc3Info)
 {
     PSOFPROBE_ROM_ENTRY_RESULT result;
     PSOFPROBE_FIRMWARE_DMA_RESULT dmaResult = NULL;
     PSOFPROBE_IPC3_READY_RESULT readyResult = NULL;
+    PSOFPROBE_IPC3_INFO_RESULT infoResult = NULL;
     PUCHAR hda = NULL;
     PUCHAR dsp = NULL;
     PULONG outputControl;
@@ -390,7 +392,8 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     ULONG sspUnavailableMask = 0;
     ULONGLONG firmwareDeadline;
     size_t dspMapBytes = CaptureIpc3Ready ? 0x82000 : 0x81000;
-    size_t resultBytes = CaptureIpc3Ready ? sizeof(SOFPROBE_IPC3_READY_RESULT)
+    size_t resultBytes = CaptureIpc3Info ? sizeof(SOFPROBE_IPC3_INFO_RESULT)
+                       : CaptureIpc3Ready ? sizeof(SOFPROBE_IPC3_READY_RESULT)
                        : (RunFirmwareDma ? sizeof(SOFPROBE_FIRMWARE_DMA_RESULT)
                                          : sizeof(SOFPROBE_ROM_ENTRY_RESULT));
     NTSTATUS status;
@@ -412,6 +415,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     if (!NT_SUCCESS(status)) goto finish;
     if (RunFirmwareDma) dmaResult = (PSOFPROBE_FIRMWARE_DMA_RESULT)result;
     if (CaptureIpc3Ready) readyResult = (PSOFPROBE_IPC3_READY_RESULT)result;
+    if (CaptureIpc3Info) infoResult = (PSOFPROBE_IPC3_INFO_RESULT)result;
     if (RunFirmwareDma) {
         RtlZeroMemory(&bus, sizeof(bus));
         status = WdfFdoQueryForInterface(Device, &GUID_BUS_INTERFACE_STANDARD,
@@ -667,6 +671,14 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                     readyResult->MailboxSize > 4096 ||
                     (readyResult->MailboxCommand & 0xf0000000) != 0x70000000) {
                     result->Result = 15;
+                } else if (CaptureIpc3Info) {
+                    if (readyResult->MailboxSize != sizeof(infoResult->ReadyWords)) {
+                        result->Result = 16;
+                    } else {
+                        for (i = 0; i < RTL_NUMBER_OF(infoResult->ReadyWords); ++i)
+                            infoResult->ReadyWords[i] = READ_REGISTER_ULONG(
+                                (PULONG)(dsp + 0x81000 + i * sizeof(ULONG)));
+                    }
                 }
             }
         }
@@ -1684,7 +1696,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_DMA &&
         IoControlCode != IOCTL_SOFPROBE_TEST_ROM_ENTRY &&
         IoControlCode != IOCTL_SOFPROBE_TEST_FIRMWARE_DMA &&
-        IoControlCode != IOCTL_SOFPROBE_TEST_IPC3_READY) {
+        IoControlCode != IOCTL_SOFPROBE_TEST_IPC3_READY &&
+        IoControlCode != IOCTL_SOFPROBE_READ_IPC3_INFO) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -1739,17 +1752,22 @@ SofProbeEvtIoDeviceControl(
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_ROM_ENTRY) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, FALSE, FALSE);
+                             InputBufferLength, FALSE, FALSE, FALSE);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_FIRMWARE_DMA) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, TRUE, FALSE);
+                             InputBufferLength, TRUE, FALSE, FALSE);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_IPC3_READY) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, TRUE, TRUE);
+                             InputBufferLength, TRUE, TRUE, FALSE);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_READ_IPC3_INFO) {
+        SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
+                             InputBufferLength, TRUE, TRUE, TRUE);
         return;
     }
     if (InputBufferLength != 0) {
