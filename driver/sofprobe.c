@@ -19,6 +19,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     PHYSICAL_ADDRESS HdaStart;
     PHYSICAL_ADDRESS DspStart;
     WDFDMAENABLER DmaEnabler;
+    WDFDMAENABLER DmaEnabler32;
     WDFCOMMONBUFFER FirmwareBdl;
     WDFCOMMONBUFFER FirmwarePayload;
     BOOLEAN ResourcesReady;
@@ -34,6 +35,16 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     ULONG SessionBeforeAdspcs;
     ULONG SessionSspBefore[3];
     BOOLEAN SessionActive;
+    WDFCOMMONBUFFER ToneBdl;
+    WDFCOMMONBUFFER ToneAudio;
+    WDFCOMMONBUFFER TonePageTable;
+    PUCHAR ToneHda;
+    ULONG ToneBeforeOutputControl;
+    ULONG ToneBeforePpctl;
+    BOOLEAN TonePrepared;
+    BOOLEAN ToneDmaRunning;
+    BOOLEAN TonePcmConfigured;
+    BOOLEAN ToneTriggerActive;
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPROBE_DEVICE_CONTEXT, SofProbeGetContext)
@@ -48,6 +59,10 @@ typedef struct _SOFPROBE_BDL_ENTRY {
     ULONG Flags;
 } SOFPROBE_BDL_ENTRY;
 C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
+
+#define SOFPROBE_TONE_BYTES 49152UL
+#define SOFPROBE_TONE_PERIOD_BYTES 12288UL
+#define SOFPROBE_TONE_PAGES 12UL
 
 static VOID
 SofProbeTestDmaAllocation(_In_ WDFREQUEST Request,
@@ -1752,6 +1767,286 @@ SofProbeReadRegisters(_In_ WDFDEVICE Device,
 }
 
 static VOID
+SofProbeFreeToneBuffers(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
+{
+    if (Context->TonePageTable != NULL) {
+        WdfObjectDelete(Context->TonePageTable);
+        Context->TonePageTable = NULL;
+    }
+    if (Context->ToneAudio != NULL) {
+        WdfObjectDelete(Context->ToneAudio);
+        Context->ToneAudio = NULL;
+    }
+    if (Context->ToneBdl != NULL) {
+        WdfObjectDelete(Context->ToneBdl);
+        Context->ToneBdl = NULL;
+    }
+}
+
+static ULONG
+SofProbeStopToneHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
+{
+    PUCHAR hda = Context->ToneHda;
+    ULONG i;
+    ULONG flags = 0;
+    LARGE_INTEGER delay;
+
+    if (!Context->TonePrepared || hda == NULL) return 4;
+    delay.QuadPart = -10000;
+    WRITE_REGISTER_UCHAR(hda + 0x160, 0);
+    for (i = 0; i < 300; ++i) {
+        if ((READ_REGISTER_UCHAR(hda + 0x160) & 2) == 0) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    if (i == 300) return 1; // Keep DMA buffers alive if RUN cannot stop.
+    Context->ToneDmaRunning = FALSE;
+    WRITE_REGISTER_UCHAR(hda + 0x163, 0x1c);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x804), Context->ToneBeforePpctl);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x178), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x17c), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x168), 0);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x16c), 0);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x172), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x160),
+                         Context->ToneBeforeOutputControl);
+    if (READ_REGISTER_ULONG((PULONG)(hda + 0x160)) !=
+            Context->ToneBeforeOutputControl ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x804)) !=
+            Context->ToneBeforePpctl ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0)
+        flags |= 2;
+    MmUnmapIoSpace(hda, 0x1000);
+    Context->ToneHda = NULL;
+    Context->TonePrepared = FALSE;
+    return flags;
+}
+
+static VOID
+SofProbeToneControl(_In_ WDFREQUEST Request,
+                    _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                    _In_ size_t OutputBufferLength,
+                    _In_ size_t InputBufferLength,
+                    _In_ ULONG Action)
+{
+    PSOFPROBE_TONE_RESULT result;
+    WDFCOMMONBUFFER bdl = NULL;
+    WDFCOMMONBUFFER audio = NULL;
+    WDFCOMMONBUFFER table = NULL;
+    PHYSICAL_ADDRESS bdlAddr;
+    PHYSICAL_ADDRESS audioAddr;
+    PHYSICAL_ADDRESS tableAddr;
+    PUCHAR hda = NULL;
+    PUCHAR toneData;
+    PUCHAR pageData;
+    SOFPROBE_BDL_ENTRY *entry;
+    ULONGLONG alignedAudio;
+    ULONG offset;
+    ULONG i;
+    ULONG pfn;
+    ULONG index;
+    LONG sample;
+    ULONG beforeControl;
+    LARGE_INTEGER delay;
+    NTSTATUS status = STATUS_SUCCESS;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    if (!Context->SessionActive) {
+        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+        return;
+    }
+    if ((Action == 0 && (Context->TonePrepared || Context->ToneBdl != NULL)) ||
+        (Action != 0 && !Context->TonePrepared)) {
+        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    if (Action == 1) {
+        if (!Context->TonePcmConfigured || Context->ToneDmaRunning) {
+            result->Result = 1;
+        } else {
+            hda = Context->ToneHda;
+            WRITE_REGISTER_UCHAR(hda + 0x163, 0x1c);
+            WRITE_REGISTER_ULONG((PULONG)(hda + 0x160), 0x00140002);
+            delay.QuadPart = -10000;
+            for (i = 0; i < 50; ++i) {
+                if (READ_REGISTER_ULONG((PULONG)(hda + 0x160)) & 2) break;
+                (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+            }
+            if (i == 50) result->Result = 2;
+            else Context->ToneDmaRunning = TRUE;
+        }
+    } else if (Action == 2) {
+        result->Result = SofProbeStopToneHardware(Context);
+    } else {
+        status = WdfCommonBufferCreate(Context->DmaEnabler, 128,
+                                       WDF_NO_OBJECT_ATTRIBUTES, &bdl);
+        if (!NT_SUCCESS(status)) goto finish;
+        status = WdfCommonBufferCreate(Context->DmaEnabler32,
+                                       SOFPROBE_TONE_BYTES + PAGE_SIZE,
+                                       WDF_NO_OBJECT_ATTRIBUTES, &audio);
+        if (!NT_SUCCESS(status)) goto finish;
+        status = WdfCommonBufferCreate(Context->DmaEnabler32, 128,
+                                       WDF_NO_OBJECT_ATTRIBUTES, &table);
+        if (!NT_SUCCESS(status)) goto finish;
+        bdlAddr = WdfCommonBufferGetAlignedLogicalAddress(bdl);
+        audioAddr = WdfCommonBufferGetAlignedLogicalAddress(audio);
+        tableAddr = WdfCommonBufferGetAlignedLogicalAddress(table);
+        alignedAudio = (audioAddr.QuadPart + PAGE_SIZE - 1) &
+                       ~((ULONGLONG)PAGE_SIZE - 1);
+        offset = (ULONG)(alignedAudio - audioAddr.QuadPart);
+        if ((bdlAddr.QuadPart & 127) != 0 ||
+            (ULONGLONG)tableAddr.QuadPart > MAXULONG ||
+            alignedAudio + SOFPROBE_TONE_BYTES - 1 > MAXULONG ||
+            offset + SOFPROBE_TONE_BYTES >
+                WdfCommonBufferGetLength(audio)) {
+            status = STATUS_DEVICE_CONFIGURATION_ERROR;
+            goto finish;
+        }
+        toneData = (PUCHAR)WdfCommonBufferGetAlignedVirtualAddress(audio) +
+                   offset;
+        pageData = (PUCHAR)WdfCommonBufferGetAlignedVirtualAddress(table);
+        RtlZeroMemory(pageData, 128);
+        for (i = 0; i < SOFPROBE_TONE_PAGES; ++i) {
+            pfn = (ULONG)(alignedAudio >> PAGE_SHIFT) + i;
+            index = (5 * i) >> 1;
+            if (i & 1) {
+                pageData[index] = (UCHAR)((pageData[index] & 0x0f) |
+                                            ((pfn & 0x0f) << 4));
+                pageData[index + 1] = (UCHAR)(pfn >> 4);
+                pageData[index + 2] = (UCHAR)(pfn >> 12);
+            } else {
+                pageData[index] = (UCHAR)pfn;
+                pageData[index + 1] = (UCHAR)(pfn >> 8);
+                pageData[index + 2] = (UCHAR)(pfn >> 16);
+            }
+        }
+        for (i = 0; i < SOFPROBE_TONE_BYTES / 8; ++i) {
+            ULONG phase = i % 48;
+            LONG triangle = phase < 12 ? (LONG)phase :
+                            phase < 36 ? 24 - (LONG)phase :
+                            (LONG)phase - 48;
+            sample = triangle * 0x01000000;
+            ((PLONG)toneData)[i * 2] = sample;
+            ((PLONG)toneData)[i * 2 + 1] = sample;
+        }
+        entry = (SOFPROBE_BDL_ENTRY *)WdfCommonBufferGetAlignedVirtualAddress(bdl);
+        RtlZeroMemory(entry, 128);
+        for (i = 0; i < 4; ++i) {
+            entry[i].Address = alignedAudio + i * SOFPROBE_TONE_PERIOD_BYTES;
+            entry[i].Length = SOFPROBE_TONE_PERIOD_BYTES;
+        }
+        hda = (PUCHAR)MmMapIoSpaceEx(Context->HdaStart, 0x1000,
+                                     PAGE_READWRITE | PAGE_NOCACHE);
+        if (hda == NULL) {
+            status = STATUS_INSUFFICIENT_RESOURCES;
+            goto finish;
+        }
+        beforeControl = READ_REGISTER_ULONG((PULONG)(hda + 0x160));
+        if (READ_REGISTER_USHORT((PUSHORT)hda) != 0x9701 ||
+            beforeControl != 0x00040000 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x804)) != 0x40000000 ||
+            READ_REGISTER_UCHAR(hda + 0x163) != 0 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 0 ||
+            READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 0 ||
+            READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != 0 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != 0) {
+            status = STATUS_DEVICE_CONFIGURATION_ERROR;
+            goto finish;
+        }
+        Context->ToneBeforeOutputControl = beforeControl;
+        Context->ToneBeforePpctl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+        Context->ToneHda = hda;
+        Context->TonePrepared = TRUE;
+        WRITE_REGISTER_ULONG((PULONG)(hda + 0x160), beforeControl | 1);
+        delay.QuadPart = -10000;
+        for (i = 0; i < 50; ++i) {
+            if (READ_REGISTER_ULONG((PULONG)(hda + 0x160)) & 1) break;
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+        if (i == 50) { result->Result = 1; goto rollback; }
+        WRITE_REGISTER_ULONG((PULONG)(hda + 0x160), beforeControl);
+        for (i = 0; i < 50; ++i) {
+            if ((READ_REGISTER_ULONG((PULONG)(hda + 0x160)) & 1) == 0)
+                break;
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+        if (i == 50) { result->Result = 2; goto rollback; }
+        WRITE_REGISTER_ULONG((PULONG)(hda + 0x160), 0x00140000);
+        WRITE_REGISTER_ULONG((PULONG)(hda + 0x804), 0x40000080);
+        WRITE_REGISTER_ULONG((PULONG)(hda + 0x168), SOFPROBE_TONE_BYTES);
+        WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x16c), 3);
+        WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x172), 0x41);
+        WRITE_REGISTER_ULONG((PULONG)(hda + 0x178), bdlAddr.LowPart);
+        WRITE_REGISTER_ULONG((PULONG)(hda + 0x17c), bdlAddr.HighPart);
+        if (READ_REGISTER_ULONG((PULONG)(hda + 0x160)) != 0x00140000 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x804)) != 0x40000080 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != SOFPROBE_TONE_BYTES ||
+            READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 3 ||
+            READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0x41 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != bdlAddr.LowPart ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != bdlAddr.HighPart) {
+            result->Result = 3;
+            goto rollback;
+        }
+        Context->ToneBdl = bdl;
+        Context->ToneAudio = audio;
+        Context->TonePageTable = table;
+        bdl = NULL;
+        audio = NULL;
+        table = NULL;
+    }
+    if (Context->ToneBdl != NULL) {
+        bdlAddr = WdfCommonBufferGetAlignedLogicalAddress(Context->ToneBdl);
+        audioAddr = WdfCommonBufferGetAlignedLogicalAddress(Context->ToneAudio);
+        tableAddr = WdfCommonBufferGetAlignedLogicalAddress(Context->TonePageTable);
+        result->BdlAddressLow = bdlAddr.LowPart;
+        result->BdlAddressHigh = bdlAddr.HighPart;
+        result->AudioAddressLow = (ULONG)((audioAddr.QuadPart + PAGE_SIZE - 1) &
+                                           ~((ULONGLONG)PAGE_SIZE - 1));
+        result->PageTableAddressLow = tableAddr.LowPart;
+        result->AudioBytes = SOFPROBE_TONE_BYTES;
+    }
+    result->StreamFormat = Context->TonePrepared ? 0x41 : 0;
+    if (Context->ToneHda != NULL) {
+        result->StreamControl = READ_REGISTER_ULONG((PULONG)(Context->ToneHda + 0x160));
+        result->StreamPosition = READ_REGISTER_ULONG((PULONG)(Context->ToneHda + 0x164));
+        result->StreamStatus = READ_REGISTER_UCHAR(Context->ToneHda + 0x163);
+    }
+    goto finish;
+
+rollback:
+    if (SofProbeStopToneHardware(Context) != 0) result->Result |= 0x100;
+    hda = NULL;
+finish:
+    if (hda != NULL && hda != Context->ToneHda)
+        MmUnmapIoSpace(hda, 0x1000);
+    if (table != NULL) WdfObjectDelete(table);
+    if (audio != NULL) WdfObjectDelete(audio);
+    if (bdl != NULL) WdfObjectDelete(bdl);
+    if (NT_SUCCESS(status)) {
+        WdfRequestSetInformation(Request, sizeof(*result));
+        WdfRequestComplete(Request, STATUS_SUCCESS);
+    } else {
+        WdfRequestComplete(Request, status);
+    }
+}
+
+static VOID
 SofProbeStopSessionHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
                             _Out_ PSOFPROBE_IPC3_SESSION_STOP_RESULT Result)
 {
@@ -1769,6 +2064,8 @@ SofProbeStopSessionHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
         Result->Result = 1;
         return;
     }
+    if (Context->TonePrepared && SofProbeStopToneHardware(Context) != 0)
+        Result->CleanupFlags |= 0x100;
     adspcs = (PULONG)(dsp + 0x04);
     delay.QuadPart = -10000;
     WRITE_REGISTER_ULONG(adspcs, READ_REGISTER_ULONG(adspcs) | 0x00000101);
@@ -1806,6 +2103,7 @@ SofProbeStopSessionHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
     Context->SessionActive = FALSE;
     Context->SessionDsp = NULL;
     MmUnmapIoSpace(dsp, 0x100000);
+    if (!Context->ToneDmaRunning) SofProbeFreeToneBuffers(Context);
 }
 
 static VOID
@@ -1919,6 +2217,10 @@ SofProbeAllowedIpc3Command(_In_ ULONG Command)
     case 0x30030000: // Topology component connect.
     case 0x30130000: // Topology pipeline complete.
     case 0x80010000: // DAI configuration.
+    case 0x60010000: // PCM parameters for the prepared tone buffer.
+    case 0x60040000: // Start the configured stream.
+    case 0x60050000: // Stop the configured stream.
+    case 0x60030000: // Release PCM stream parameters.
         return TRUE;
     default:
         return FALSE;
@@ -1970,6 +2272,46 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
         return;
     }
     RtlCopyMemory(words, input->RequestWords, size);
+    if (words[1] == 0x60010000) {
+        PHYSICAL_ADDRESS tableAddress;
+        if (!Context->TonePrepared || Context->TonePcmConfigured ||
+            Context->TonePageTable == NULL || size != 108) {
+            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
+            return;
+        }
+        tableAddress = WdfCommonBufferGetAlignedLogicalAddress(
+            Context->TonePageTable);
+        if (words[2] != 0 || words[6] != 84 || words[7] != 0 ||
+            words[8] != tableAddress.LowPart ||
+            words[9] != SOFPROBE_TONE_PAGES ||
+            words[10] != SOFPROBE_TONE_BYTES ||
+            words[14] != 0 || words[15] != 2 ||
+            words[17] != 48000 || words[18] != 0x00020001 ||
+            words[19] != 0x00040004 ||
+            words[20] != SOFPROBE_TONE_PERIOD_BYTES || words[21] != 1) {
+            WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+            return;
+        }
+    } else if (words[1] == 0x60040000) {
+        if (size != 12 || words[2] != 0 ||
+            !Context->TonePcmConfigured || !Context->ToneDmaRunning ||
+            Context->ToneTriggerActive) {
+            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
+            return;
+        }
+    } else if (words[1] == 0x60050000) {
+        if (size != 12 || words[2] != 0 ||
+            !Context->ToneTriggerActive) {
+            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
+            return;
+        }
+    } else if (words[1] == 0x60030000) {
+        if (size != 12 || words[2] != 0 ||
+            !Context->TonePcmConfigured || Context->ToneTriggerActive) {
+            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
+            return;
+        }
+    }
     status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
                                             (PVOID *)&result, NULL);
     if (!NT_SUCCESS(status)) {
@@ -2014,6 +2356,16 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
         for (i = 0; i < result->ReplySize / sizeof(ULONG); ++i)
             result->ReplyWords[i] = READ_REGISTER_ULONG(
                 (PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)));
+        if (result->ReplyError == 0) {
+            if (words[1] == 0x60010000)
+                Context->TonePcmConfigured = TRUE;
+            else if (words[1] == 0x60040000)
+                Context->ToneTriggerActive = TRUE;
+            else if (words[1] == 0x60050000)
+                Context->ToneTriggerActive = FALSE;
+            else if (words[1] == 0x60030000)
+                Context->TonePcmConfigured = FALSE;
+        }
     }
     WRITE_REGISTER_ULONG(hipcida, 0x80000000);
 finish:
@@ -2065,6 +2417,11 @@ SofProbeEvtDeviceAdd(
     status = WdfDmaEnablerCreate(device, &dmaConfig, WDF_NO_OBJECT_ATTRIBUTES,
                                  &context->DmaEnabler);
     if (!NT_SUCCESS(status)) return status;
+    WDF_DMA_ENABLER_CONFIG_INIT(&dmaConfig, WdfDmaProfileScatterGatherDuplex,
+                                SOFPROBE_TONE_BYTES + PAGE_SIZE);
+    status = WdfDmaEnablerCreate(device, &dmaConfig, WDF_NO_OBJECT_ATTRIBUTES,
+                                 &context->DmaEnabler32);
+    if (!NT_SUCCESS(status)) return status;
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
     queueConfig.EvtIoDeviceControl = SofProbeEvtIoDeviceControl;
     status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES,
@@ -2108,7 +2465,10 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_START_SESSION &&
         IoControlCode != IOCTL_SOFPROBE_SESSION_MEMORY &&
         IoControlCode != IOCTL_SOFPROBE_STOP_SESSION &&
-        IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE) {
+        IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE &&
+        IoControlCode != IOCTL_SOFPROBE_PREPARE_TONE &&
+        IoControlCode != IOCTL_SOFPROBE_RUN_TONE &&
+        IoControlCode != IOCTL_SOFPROBE_STOP_TONE) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -2121,7 +2481,10 @@ SofProbeEvtIoDeviceControl(
     if (context->SessionActive &&
         IoControlCode != IOCTL_SOFPROBE_SESSION_MEMORY &&
         IoControlCode != IOCTL_SOFPROBE_STOP_SESSION &&
-        IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE) {
+        IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE &&
+        IoControlCode != IOCTL_SOFPROBE_PREPARE_TONE &&
+        IoControlCode != IOCTL_SOFPROBE_RUN_TONE &&
+        IoControlCode != IOCTL_SOFPROBE_STOP_TONE) {
         WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
         return;
     }
@@ -2153,6 +2516,15 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_SESSION_EXCHANGE) {
         SofProbeSessionExchange(Request, context, OutputBufferLength,
                                 InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_PREPARE_TONE ||
+        IoControlCode == IOCTL_SOFPROBE_RUN_TONE ||
+        IoControlCode == IOCTL_SOFPROBE_STOP_TONE) {
+        SofProbeToneControl(Request, context, OutputBufferLength,
+                            InputBufferLength,
+                            IoControlCode == IOCTL_SOFPROBE_PREPARE_TONE ? 0 :
+                            IoControlCode == IOCTL_SOFPROBE_RUN_TONE ? 1 : 2);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_READ_STREAM0) {
@@ -2304,6 +2676,12 @@ SofProbeEvtReleaseHardware(
             context->SessionDsp = NULL;
             context->SessionActive = FALSE;
         }
+        if (context->ToneHda != NULL) {
+            MmUnmapIoSpace(context->ToneHda, 0x1000);
+            context->ToneHda = NULL;
+            context->TonePrepared = FALSE;
+        }
+        if (!context->ToneDmaRunning) SofProbeFreeToneBuffers(context);
         if (context->FirmwarePayload != NULL) {
             WdfObjectDelete(context->FirmwarePayload);
             context->FirmwarePayload = NULL;
