@@ -8,10 +8,11 @@ does **not** yet contain an installable audio driver.
 
 The read-only PCI probe builds on a Windows 2022 runner with the WDK, and its
 generated INF passes a separate x64 `InfVerif /w` check. It loaded on the N100,
-reported the controller's assigned resources, and read its HDA identification
-and capability registers. Both test packages were removed and the laptop was
-returned to normal boot settings. See the [PCI probe](docs/n100-probe-test.md)
-and [register probe](docs/n100-register-test.md) records. Audio still does not
+reported the controller's assigned resources, HDA capabilities, and powered-off
+DSP status. All test packages were removed and the laptop was
+returned to normal boot settings. See the [PCI resource](docs/n100-probe-test.md),
+[HDA register](docs/n100-register-test.md), and
+[DSP status](docs/n100-dsp-status-test.md) test records. Audio still does not
 work: the probe does not load firmware or expose audio streams.
 
 ## Why a host driver is needed
