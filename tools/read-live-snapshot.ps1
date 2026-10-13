@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-only
 param([switch]$PulseCore0, [switch]$TestDmaAllocation,
-      [string]$StageFirmware, [switch]$ReadStream0)
+      [string]$StageFirmware, [switch]$ReadStream0,
+      [switch]$TestStreamSetup)
 $ErrorActionPreference = 'Stop'
 $selected = 0
 if ($PulseCore0) { $selected++ }
 if ($TestDmaAllocation) { $selected++ }
 if ($StageFirmware) { $selected++ }
 if ($ReadStream0) { $selected++ }
+if ($TestStreamSetup) { $selected++ }
 if ($selected -gt 1) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
@@ -34,9 +36,9 @@ public static class SofProbeClient {
         return new string(buffer).Split(new char[]{'\0'}, StringSplitOptions.RemoveEmptyEntries);
     }
     public static uint[] Exchange(string path, uint code, byte[] input) {
-        using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+        using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[32];
+            byte[] bytes = new byte[code == 0x22A014U ? 64 : 32];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
@@ -44,7 +46,7 @@ public static class SofProbeClient {
             if (!ok)
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             if (returned != bytes.Length) throw new Exception("Unexpected snapshot length: " + returned);
-            uint[] words = new uint[8];
+            uint[] words = new uint[bytes.Length / 4];
             for (int i=0; i<words.Length; i++) words[i] = BitConverter.ToUInt32(bytes, i*4);
             return words;
         }
@@ -54,7 +56,7 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } else { [uint32]0x226000 }
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } else { [uint32]0x226000 }
 $inputBytes = $null
 if ($StageFirmware) {
     $expectedHash = '8433390E4ABFE40B251FF3DEC41604E7B817501D1097D51AA2F51C11444D3BF0'
@@ -77,6 +79,31 @@ if ($ReadStream0) {
     return
 }
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
+if ($TestStreamSetup) {
+    [pscustomobject]@{
+        Version = $values[0]
+        BeforeControl = ('0x{0:X6}' -f $values[1])
+        ResetAcknowledged = [bool]$values[2]
+        ConfiguredControl = ('0x{0:X6}' -f $values[3])
+        ConfiguredCbl = $values[4]
+        ConfiguredLvi = $values[5]
+        ConfiguredFormat = ('0x{0:X4}' -f $values[6])
+        ConfiguredBdl = ('0x{0:X8}{1:X8}' -f $values[8], $values[7])
+        ConfiguredPpctl = ('0x{0:X8}' -f $values[9])
+        RestoredControl = ('0x{0:X6}' -f $values[10])
+        RestoredCbl = $values[11]
+        RestoredLvi = $values[12]
+        RestoredFormat = $values[13]
+        RestoredBdlLow = $values[14]
+        Result = $values[15]
+    } | Format-List
+    if ($values[15] -ne 0 -or $values[2] -ne 1 -or
+        $values[10] -ne $values[1] -or $values[11] -ne 0 -or
+        $values[12] -ne 0 -or $values[13] -ne 0 -or $values[14] -ne 0) {
+        throw 'Stream setup did not complete and restore the observed baseline'
+    }
+    return
+}
 if ($TestDmaAllocation -or $StageFirmware) {
     [pscustomobject]@{
         Version = $values[0]

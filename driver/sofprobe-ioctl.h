@@ -15,6 +15,8 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 #define IOCTL_SOFPROBE_READ_STREAM0 \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_SOFPROBE_TEST_STREAM_SETUP \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 
 typedef struct _SOFPROBE_SNAPSHOT {
     ULONG Version;
@@ -59,3 +61,22 @@ typedef struct _SOFPROBE_STREAM_SNAPSHOT {
     ULONG BdlAddressHigh;
     ULONG ProcessingPipeControl;
 } SOFPROBE_STREAM_SNAPSHOT, *PSOFPROBE_STREAM_SNAPSHOT;
+
+typedef struct _SOFPROBE_STREAM_SETUP_RESULT {
+    ULONG Version;
+    ULONG BeforeControl;
+    ULONG ResetAcknowledged;
+    ULONG ConfiguredControl;
+    ULONG ConfiguredCbl;
+    ULONG ConfiguredLvi;
+    ULONG ConfiguredFormat;
+    ULONG ConfiguredBdlLow;
+    ULONG ConfiguredBdlHigh;
+    ULONG ConfiguredPpctl;
+    ULONG RestoredControl;
+    ULONG RestoredCbl;
+    ULONG RestoredLvi;
+    ULONG RestoredFormat;
+    ULONG RestoredBdlLow;
+    ULONG Result; // 0: success, 1: reset failure, 2: setup mismatch, 3: restore mismatch
+} SOFPROBE_STREAM_SETUP_RESULT, *PSOFPROBE_STREAM_SETUP_RESULT;
