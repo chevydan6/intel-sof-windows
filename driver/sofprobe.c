@@ -17,6 +17,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     PHYSICAL_ADDRESS HdaStart;
     PHYSICAL_ADDRESS DspStart;
     BOOLEAN ResourcesReady;
+    BOOLEAN PowerPulseAttempted;
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPROBE_DEVICE_CONTEXT, SofProbeGetContext)
@@ -24,6 +25,96 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPROBE_DEVICE_CONTEXT, SofProbeGetContext)
 // {F6B7AB70-381C-4A67-A85C-4A006A7B01DD}
 static const GUID SofProbeInterfaceGuid =
     { 0xf6b7ab70, 0x381c, 0x4a67, { 0xa8, 0x5c, 0x4a, 0x00, 0x6a, 0x7b, 0x01, 0xdd } };
+
+static VOID
+SofProbePulseCore0(_In_ WDFREQUEST Request,
+                   _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                   _In_ size_t OutputBufferLength,
+                   _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_POWER_RESULT result;
+    PUCHAR hda;
+    PUCHAR dsp;
+    PULONG adspcs;
+    ULONG before;
+    ULONG ppctl;
+    ULONG gctl;
+    ULONG i;
+    LARGE_INTEGER interval;
+    NTSTATUS status;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    if (Context->PowerPulseAttempted) {
+        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    hda = (PUCHAR)MmMapIoSpaceEx(Context->HdaStart, 0x1000,
+                                PAGE_READONLY | PAGE_NOCACHE);
+    if (hda == NULL) {
+        WdfRequestComplete(Request, STATUS_INSUFFICIENT_RESOURCES);
+        return;
+    }
+    dsp = (PUCHAR)MmMapIoSpaceEx(Context->DspStart, 0x100,
+                                PAGE_READWRITE | PAGE_NOCACHE);
+    if (dsp == NULL) {
+        MmUnmapIoSpace(hda, 0x1000);
+        WdfRequestComplete(Request, STATUS_INSUFFICIENT_RESOURCES);
+        return;
+    }
+
+    gctl = READ_REGISTER_ULONG((PULONG)(hda + 0x08));
+    ppctl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+    adspcs = (PULONG)(dsp + 0x04);
+    before = READ_REGISTER_ULONG(adspcs);
+    // This exact baseline was observed repeatedly on the N100. Do not
+    // disturb a DSP that is active, or any other core's control bits.
+    if ((gctl & 1) == 0 || ppctl != 0x40000000 || before != 0x00000f0f) {
+        MmUnmapIoSpace(dsp, 0x100);
+        MmUnmapIoSpace(hda, 0x1000);
+        WdfRequestComplete(Request, STATUS_DEVICE_CONFIGURATION_ERROR);
+        return;
+    }
+
+    Context->PowerPulseAttempted = TRUE;
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    result->Before = before;
+    interval.QuadPart = -10000; // One millisecond, bounded to 100 polls.
+    WRITE_REGISTER_ULONG(adspcs, before | 0x00010000);
+    result->Requested = READ_REGISTER_ULONG(adspcs);
+    for (i = 0; i < 100; ++i) {
+        if (READ_REGISTER_ULONG(adspcs) & 0x01000000) break;
+        KeDelayExecutionThread(KernelMode, FALSE, &interval);
+    }
+    result->UpPolls = i;
+    result->Powered = READ_REGISTER_ULONG(adspcs);
+
+    // Keep reset/stall asserted throughout. Always clear the SPA request,
+    // including when the power-up acknowledgment times out.
+    WRITE_REGISTER_ULONG(adspcs, before);
+    for (i = 0; i < 100; ++i) {
+        if ((READ_REGISTER_ULONG(adspcs) & 0x01000000) == 0) break;
+        KeDelayExecutionThread(KernelMode, FALSE, &interval);
+    }
+    result->DownPolls = i;
+    result->Restored = READ_REGISTER_ULONG(adspcs);
+    if ((result->Powered & 0x01000000) == 0) result->Result = 1;
+    if ((result->Restored & 0x01000000) != 0 ||
+        (result->Restored & 0x00010000) != 0) result->Result = 2;
+    MmUnmapIoSpace(dsp, 0x100);
+    MmUnmapIoSpace(hda, 0x1000);
+    WdfRequestSetInformation(Request, sizeof(*result));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
+}
 
 static NTSTATUS
 SofProbeSaveValue(_In_ WDFKEY Key, _In_ PCWSTR Name, _In_ ULONG Value)
@@ -218,6 +309,7 @@ SofProbeEvtDeviceAdd(
     callbacks.EvtDeviceReleaseHardware = SofProbeEvtReleaseHardware;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &callbacks);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, SOFPROBE_DEVICE_CONTEXT);
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
     if (!NT_SUCCESS(status)) return status;
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
@@ -244,13 +336,22 @@ SofProbeEvtIoDeviceControl(
     PUCHAR dsp = NULL;
     NTSTATUS status;
 
-    UNREFERENCED_PARAMETER(InputBufferLength);
-    if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT) {
+    if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
+        IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
     if (!context->ResourcesReady) {
         WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_PULSE_CORE0) {
+        SofProbePulseCore0(Request, context, OutputBufferLength,
+                           InputBufferLength);
+        return;
+    }
+    if (InputBufferLength != 0) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
         return;
     }
     if (OutputBufferLength < sizeof(SOFPROBE_SNAPSHOT)) {
@@ -367,6 +468,7 @@ SofProbeEvtPrepareHardware(
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
     {
+        SofProbeGetContext(Device)->ResourcesReady = FALSE;
         NTSTATUS status = SofProbeReadRegisters(Device, hdaMemory, dspMemory);
         if (NT_SUCCESS(status)) {
             PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);

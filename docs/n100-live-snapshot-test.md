@@ -16,4 +16,4 @@ The driver bound to `PCI\VEN_8086&DEV_54C8&SUBSYS_00000000&REV_00\3&11583659&0&F
 
 This matched the earlier boot-time registry snapshot. The IOCTL maps fixed HDA/DSP offsets read-only, returns a versioned 32-byte response, then unmaps both ranges. It does not power the DSP, load firmware, set up DMA, or access the codec.
 
-After the reading, `pnputil` removed the package, the registry diagnostics were removed, the transient certificate was removed from Root and TrustedPublisher, and the test-signing BCD value was deleted. A reboot and rollback verification follow this test.
+After the reading, `pnputil` removed the package, the registry diagnostics were removed, the transient certificate was removed from Root and TrustedPublisher, and the test-signing BCD value was deleted. After the 18:18:52 reboot, rollback verification found the controller stopped with no bound driver, no probe package or service, no diagnostic values, no certificate trust, and test signing disabled.

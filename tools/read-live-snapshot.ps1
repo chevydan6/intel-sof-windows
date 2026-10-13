@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
+param([switch]$PulseCore0)
 $ErrorActionPreference = 'Stop'
 $source = @'
 using System;
@@ -23,12 +24,12 @@ public static class SofProbeClient {
         if (result != 0) throw new Exception("Interface list: CONFIGRET " + result);
         return new string(buffer).Split(new char[]{'\0'}, StringSplitOptions.RemoveEmptyEntries);
     }
-    public static uint[] Snapshot(string path) {
-        using (SafeFileHandle handle = CreateFileW(path, 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+    public static uint[] Exchange(string path, bool pulse) {
+        using (SafeFileHandle handle = CreateFileW(path, pulse ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             byte[] bytes = new byte[32];
             uint returned;
-            if (!DeviceIoControl(handle, 0x226000, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero))
+            if (!DeviceIoControl(handle, pulse ? 0x22A004U : 0x226000U, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             if (returned != bytes.Length) throw new Exception("Unexpected snapshot length: " + returned);
             uint[] words = new uint[8];
@@ -41,8 +42,24 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$values = [SofProbeClient]::Snapshot($paths[0])
+$values = [SofProbeClient]::Exchange($paths[0], $PulseCore0.IsPresent)
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
+if ($PulseCore0) {
+    [pscustomobject]@{
+        Version = $values[0]
+        Before = ('0x{0:X8}' -f $values[1])
+        Requested = ('0x{0:X8}' -f $values[2])
+        Powered = ('0x{0:X8}' -f $values[3])
+        Restored = ('0x{0:X8}' -f $values[4])
+        UpPolls = $values[5]
+        DownPolls = $values[6]
+        Result = $values[7]
+    } | Format-List
+    if ($values[7] -ne 0 -or $values[4] -ne $values[1]) {
+        throw 'The DSP power pulse did not restore the observed baseline'
+    }
+    return
+}
 [pscustomobject]@{
     Interface = $paths[0]
     Version = $values[0]
