@@ -85,6 +85,9 @@ static const GUID SofPlayAudioCategory =
 static const GUID SofPlaySpeakerNode =
     { 0xdff21ce1, 0xf70f, 0x11d0,
       { 0xb9, 0x17, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96 } };
+static const GUID SofPlayDefaultMode =
+    { 0xc18e2f7e, 0x933d, 0x4965,
+      { 0xb7, 0xd1, 0x1e, 0xef, 0x22, 0x8d, 0x2a, 0xf3 } };
 
 static KSDATAFORMAT_WAVEFORMATEXTENSIBLE SofPlayPcm48000S32 = {
     {
@@ -192,7 +195,7 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     status = AcxDataFormatListAssignDefaultDataFormat(defaultFormats, format);
     if (!NT_SUCCESS(status)) goto finish;
     status = AcxPinAssignModeDataFormatList(pins[0],
-                                           &AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
+                                           &SofPlayDefaultMode,
                                            defaultFormats);
     if (!NT_SUCCESS(status)) goto finish;
     status = AcxCircuitAddPins(circuit, pins, RTL_NUMBER_OF(pins));
