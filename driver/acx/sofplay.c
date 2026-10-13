@@ -89,7 +89,8 @@ static const GUID SofPlayDefaultMode =
     { 0xc18e2f7e, 0x933d, 0x4965,
       { 0xb7, 0xd1, 0x1e, 0xef, 0x22, 0x8d, 0x2a, 0xf3 } };
 
-static KSDATAFORMAT_WAVEFORMATEXTENSIBLE SofPlayPcm48000S32 = {
+// Negotiation diagnostic only: stream creation still requires 8-byte frames.
+static KSDATAFORMAT_WAVEFORMATEXTENSIBLE SofPlayPcm48000S16 = {
     {
         sizeof(KSDATAFORMAT_WAVEFORMATEXTENSIBLE), 0, 0, 0,
         STATICGUIDOF(KSDATAFORMAT_TYPE_AUDIO),
@@ -97,9 +98,9 @@ static KSDATAFORMAT_WAVEFORMATEXTENSIBLE SofPlayPcm48000S32 = {
         STATICGUIDOF(KSDATAFORMAT_SPECIFIER_WAVEFORMATEX)
     },
     {
-        { WAVE_FORMAT_EXTENSIBLE, 2, 48000, 384000, 8, 32,
+        { WAVE_FORMAT_EXTENSIBLE, 2, 48000, 192000, 4, 16,
           sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) },
-        24, KSAUDIO_SPEAKER_STEREO,
+        16, KSAUDIO_SPEAKER_STEREO,
         STATICGUIDOF(KSDATAFORMAT_SUBTYPE_PCM)
     }
 };
@@ -170,7 +171,7 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     status = AcxPinAddJacks(pins[1], &jack, 1);
     if (!NT_SUCCESS(status)) goto finish;
 
-    ACX_DATAFORMAT_CONFIG_INIT_KS(&formatConfig, &SofPlayPcm48000S32);
+    ACX_DATAFORMAT_CONFIG_INIT_KS(&formatConfig, &SofPlayPcm48000S16);
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = circuit;
     status = AcxDataFormatCreate(Device, &attributes, &formatConfig, &format);

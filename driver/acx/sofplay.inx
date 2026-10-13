@@ -69,9 +69,9 @@ HKR,,CLSID,,%ProxyClsid%
 HKR,,FriendlyName,,%SpeakerFriendlyName%
 HKR,EP\0,%EndpointAssociation%,,%NodeTypeAny%
 HKR,EP\0,%EndpointEventDriven%,0x00010001,0x1
-; Serialized VT_BLOB with 48 kHz stereo PCM, 24 valid bits in 32-bit slots.
+; Negotiation diagnostic: 48 kHz stereo 16-bit PCM. Stream creation rejects it.
 HKR,EP\0,%AudioEngineOemFormat%,0x00000001,41,00,00,00,28,00,00,00,\
- FE,FF,02,00,80,BB,00,00,00,DC,05,00,08,00,20,00,16,00,18,00,\
+ FE,FF,02,00,80,BB,00,00,00,EE,02,00,04,00,10,00,16,00,10,00,\
  03,00,00,00,01,00,00,00,00,00,10,00,80,00,00,AA,00,38,9B,71
 
 [Strings]
