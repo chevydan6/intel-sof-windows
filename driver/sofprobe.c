@@ -16,6 +16,7 @@ EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL SofProbeEvtIoDeviceControl;
 typedef struct _SOFPROBE_DEVICE_CONTEXT {
     PHYSICAL_ADDRESS HdaStart;
     PHYSICAL_ADDRESS DspStart;
+    WDFDMAENABLER DmaEnabler;
     BOOLEAN ResourcesReady;
     BOOLEAN PowerPulseAttempted;
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
@@ -25,6 +26,74 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPROBE_DEVICE_CONTEXT, SofProbeGetContext)
 // {F6B7AB70-381C-4A67-A85C-4A006A7B01DD}
 static const GUID SofProbeInterfaceGuid =
     { 0xf6b7ab70, 0x381c, 0x4a67, { 0xa8, 0x5c, 0x4a, 0x00, 0x6a, 0x7b, 0x01, 0xdd } };
+
+typedef struct _SOFPROBE_BDL_ENTRY {
+    ULONGLONG Address;
+    ULONG Length;
+    ULONG Flags;
+} SOFPROBE_BDL_ENTRY;
+C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
+
+static VOID
+SofProbeTestDmaAllocation(_In_ WDFREQUEST Request,
+                          _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                          _In_ size_t OutputBufferLength,
+                          _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_DMA_ALLOCATION_RESULT result;
+    WDFCOMMONBUFFER bdl = NULL;
+    WDFCOMMONBUFFER payload = NULL;
+    PHYSICAL_ADDRESS bdlAddress;
+    PHYSICAL_ADDRESS payloadAddress;
+    SOFPROBE_BDL_ENTRY *entry;
+    NTSTATUS status;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    // This IOCTL only tests Windows DMA allocation and BDL layout. It never
+    // programs a stream register or asks the hardware to fetch these buffers.
+    status = WdfCommonBufferCreate(Context->DmaEnabler, 128,
+                                   WDF_NO_OBJECT_ATTRIBUTES, &bdl);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = WdfCommonBufferCreate(Context->DmaEnabler, 4096,
+                                   WDF_NO_OBJECT_ATTRIBUTES, &payload);
+    if (!NT_SUCCESS(status)) goto finish;
+    bdlAddress = WdfCommonBufferGetAlignedLogicalAddress(bdl);
+    payloadAddress = WdfCommonBufferGetAlignedLogicalAddress(payload);
+    if ((bdlAddress.QuadPart & 127) != 0 ||
+        (payloadAddress.QuadPart & 127) != 0) {
+        status = STATUS_DATATYPE_MISALIGNMENT;
+        goto finish;
+    }
+    RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(bdl), 128);
+    RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(payload), 4096);
+    entry = (SOFPROBE_BDL_ENTRY *)WdfCommonBufferGetAlignedVirtualAddress(bdl);
+    entry->Address = (ULONGLONG)payloadAddress.QuadPart;
+    entry->Length = 4096;
+    entry->Flags = 0;
+    result->Version = 1;
+    result->BdlAddressLow = bdlAddress.LowPart;
+    result->BdlAddressHigh = bdlAddress.HighPart;
+    result->PayloadAddressLow = payloadAddress.LowPart;
+    result->PayloadAddressHigh = payloadAddress.HighPart;
+    result->BdlBytes = 128;
+    result->PayloadBytes = 4096;
+    result->BdlEntryBytes = sizeof(*entry);
+    WdfRequestSetInformation(Request, sizeof(*result));
+
+finish:
+    if (payload != NULL) WdfObjectDelete(payload);
+    if (bdl != NULL) WdfObjectDelete(bdl);
+    WdfRequestComplete(Request, status);
+}
 
 static VOID
 SofProbePulseCore0(_In_ WDFREQUEST Request,
@@ -300,7 +369,9 @@ SofProbeEvtDeviceAdd(
     WDF_PNPPOWER_EVENT_CALLBACKS callbacks;
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_IO_QUEUE_CONFIG queueConfig;
+    WDF_DMA_ENABLER_CONFIG dmaConfig;
     WDFDEVICE device;
+    PSOFPROBE_DEVICE_CONTEXT context;
     NTSTATUS status;
 
     UNREFERENCED_PARAMETER(Driver);
@@ -311,6 +382,13 @@ SofProbeEvtDeviceAdd(
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, SOFPROBE_DEVICE_CONTEXT);
     attributes.ExecutionLevel = WdfExecutionLevelPassive;
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
+    if (!NT_SUCCESS(status)) return status;
+    context = SofProbeGetContext(device);
+    WdfDeviceSetAlignmentRequirement(device, FILE_128_BYTE_ALIGNMENT);
+    WDF_DMA_ENABLER_CONFIG_INIT(&dmaConfig, WdfDmaProfileScatterGather64Duplex,
+                                524288);
+    status = WdfDmaEnablerCreate(device, &dmaConfig, WDF_NO_OBJECT_ATTRIBUTES,
+                                 &context->DmaEnabler);
     if (!NT_SUCCESS(status)) return status;
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
     queueConfig.EvtIoDeviceControl = SofProbeEvtIoDeviceControl;
@@ -337,7 +415,8 @@ SofProbeEvtIoDeviceControl(
     NTSTATUS status;
 
     if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
-        IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0) {
+        IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0 &&
+        IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -348,6 +427,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_PULSE_CORE0) {
         SofProbePulseCore0(Request, context, OutputBufferLength,
                            InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_TEST_DMA_ALLOCATION) {
+        SofProbeTestDmaAllocation(Request, context, OutputBufferLength,
+                                  InputBufferLength);
         return;
     }
     if (InputBufferLength != 0) {

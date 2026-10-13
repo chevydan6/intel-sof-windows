@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
-param([switch]$PulseCore0)
+param([switch]$PulseCore0, [switch]$TestDmaAllocation)
 $ErrorActionPreference = 'Stop'
+if ($PulseCore0 -and $TestDmaAllocation) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
 using System.Runtime.InteropServices;
@@ -24,12 +25,12 @@ public static class SofProbeClient {
         if (result != 0) throw new Exception("Interface list: CONFIGRET " + result);
         return new string(buffer).Split(new char[]{'\0'}, StringSplitOptions.RemoveEmptyEntries);
     }
-    public static uint[] Exchange(string path, bool pulse) {
-        using (SafeFileHandle handle = CreateFileW(path, pulse ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+    public static uint[] Exchange(string path, uint code) {
+        using (SafeFileHandle handle = CreateFileW(path, code == 0x22A004U ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             byte[] bytes = new byte[32];
             uint returned;
-            if (!DeviceIoControl(handle, pulse ? 0x22A004U : 0x226000U, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero))
+            if (!DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             if (returned != bytes.Length) throw new Exception("Unexpected snapshot length: " + returned);
             uint[] words = new uint[8];
@@ -42,8 +43,24 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$values = [SofProbeClient]::Exchange($paths[0], $PulseCore0.IsPresent)
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } else { [uint32]0x226000 }
+$values = [SofProbeClient]::Exchange($paths[0], $code)
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
+if ($TestDmaAllocation) {
+    [pscustomobject]@{
+        Version = $values[0]
+        BdlLogicalAddress = ('0x{0:X8}{1:X8}' -f $values[2], $values[1])
+        PayloadLogicalAddress = ('0x{0:X8}{1:X8}' -f $values[4], $values[3])
+        BdlBytes = $values[5]
+        PayloadBytes = $values[6]
+        BdlEntryBytes = $values[7]
+    } | Format-List
+    if (($values[1] -band 127) -ne 0 -or ($values[3] -band 127) -ne 0 -or
+        $values[5] -ne 128 -or $values[6] -ne 4096 -or $values[7] -ne 16) {
+        throw 'Unexpected DMA buffer alignment or descriptor size'
+    }
+    return
+}
 if ($PulseCore0) {
     [pscustomobject]@{
         Version = $values[0]
