@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Initial ACX render circuit for the N100 SOF speaker path.
 
-#include <ntddk.h>
-#include <wdf.h>
-#include <acx.h>
+#include <wdm.h>
+#include <windef.h>
+#include <initguid.h>
 #include <ks.h>
 #include <ksmedia.h>
 #include <mmreg.h>
+#include <wdf.h>
+#include <acx.h>
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SofPlayEvtDeviceAdd;
