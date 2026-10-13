@@ -1,0 +1,21 @@
+name: Build read-only PCI probe
+
+on:
+  push:
+    paths:
+      - 'driver/**'
+      - '.github/workflows/build-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build with Windows Driver Kit
+        shell: pwsh
+        run: msbuild driver/sofprobe.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal

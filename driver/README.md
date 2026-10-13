@@ -13,3 +13,8 @@ clean bind, a resource report, and a clean uninstall with no audio regression.
 
 The implementation follows the KMDF resource enumeration API described in
 [Microsoft's hardware resource guide](https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/finding-and-mapping-hardware-resources).
+
+The [GitHub Actions workflow](../.github/workflows/build-probe.yml) builds on
+the Windows 2022 image, which includes the WDK. A green build is required
+before any hardware test, but it does not establish that the probe is safe or
+functional on the N100 by itself.
