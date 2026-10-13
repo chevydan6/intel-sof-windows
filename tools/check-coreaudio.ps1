@@ -68,6 +68,10 @@ public static class CoreAudioCheck {
                 IAudioClient audio = (IAudioClient)Marshal.GetTypedObjectForIUnknown(client, typeof(IAudioClient));
                 IntPtr mix; h = audio.GetMixFormat(out mix);
                 Console.WriteLine("GetMixFormat HR=0x{0:X8}", h);
+                long defaultPeriod, minimumPeriod;
+                int periodHr = audio.GetDevicePeriod(out defaultPeriod, out minimumPeriod);
+                Console.WriteLine("GetDevicePeriod HR=0x{0:X8}, default={1}, minimum={2}",
+                    periodHr, defaultPeriod, minimumPeriod);
                 if (h == 0) {
                     Console.WriteLine("Mix format tag={0}, channels={1}, rate={2}, block={3}, bits={4}",
                         Marshal.ReadInt16(mix,0), Marshal.ReadInt16(mix,2), Marshal.ReadInt32(mix,4),
@@ -92,6 +96,10 @@ public static class CoreAudioCheck {
                     new Guid("00000001-0000-0010-8000-00AA00389B71").ToByteArray().CopyTo(fmt, 24);
                     IntPtr native = Marshal.AllocHGlobal(40);
                     Marshal.Copy(fmt, 0, native, 40);
+                    IntPtr closest;
+                    int supportedHr = audio.IsFormatSupported(0, native, out closest);
+                    Console.WriteLine("IsFormatSupported explicit S32 HR=0x{0:X8}", supportedHr);
+                    if (closest != IntPtr.Zero) Marshal.FreeCoTaskMem(closest);
                     Guid session = Guid.Empty;
                     int hr = audio.Initialize(0, 0, 1000000, 0, native, ref session);
                     Console.WriteLine("Initialize explicit S32 HR=0x{0:X8}", hr);

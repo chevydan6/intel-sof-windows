@@ -28,6 +28,15 @@ sofplay.sys=1,,
 [Install.NT]
 CopyFiles=DriverFiles
 
+; The earlier probe package restricted this PDO to SYSTEM and Administrators.
+; Grant the Windows audio services (Local Service) stream access on the
+; integrated ACX package. The probe's powerful IOCTLs remain development-only.
+[Install.NT.HW]
+AddReg=DeviceSecurity
+
+[DeviceSecurity]
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGWGX;;;LS)"
+
 [DriverFiles]
 sofplay.sys
 
