@@ -6,6 +6,12 @@ The first target is an Intel N100 laptop with a PCI audio controller at
 currently contains the verified hardware baseline and diagnostic tooling; it
 does **not** yet contain an installable audio driver.
 
+The first read-only PCI probe now builds on a Windows 2022 runner with the WDK.
+Its generated INF also passes a separate x64 `InfVerif /w` check. The probe
+package has been staged on the N100 for inspection, but it has **not** been
+installed or tested against the controller. A successful build does not mean
+that audio works or that the probe loads on the laptop.
+
 ## Why a host driver is needed
 
 SOF firmware runs on the audio DSP. A Windows host driver must claim the PCI
@@ -36,8 +42,8 @@ See [hardware/n100-windows.json](hardware/n100-windows.json) and
 
 Run `tools/collect-hardware.ps1` on the Windows target to refresh the PnP
 baseline. The Windows Driver Kit is not installed on the target, so initial
-builds need a separate Windows build environment or CI. No driver should be
-installed on the target until the read-only probe builds and is reviewed.
+builds use Windows CI. The current test-signed probe package would require a
+controlled test-signing setup on the target before a hardware test.
 
 ## Licensing
 
