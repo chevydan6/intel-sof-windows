@@ -4,9 +4,11 @@
 #include <wdm.h>
 #include <windef.h>
 #include <initguid.h>
+#define NOBITMAP
+#include <mmsystem.h>
 #include <ks.h>
-#include <ksmedia.h>
 #include <mmreg.h>
+#include <ksmedia.h>
 #include <wdf.h>
 #include <acx.h>
 
