@@ -704,6 +704,13 @@ cleanup:
             result->RomStatus = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
             result->RomError = READ_REGISTER_ULONG((PULONG)(dsp + 0x80004));
         }
+        WRITE_REGISTER_ULONG(adspcs, READ_REGISTER_ULONG(adspcs) | 0x00000101);
+        for (i = 0; i < 50; ++i) {
+            if ((READ_REGISTER_ULONG(adspcs) & 0x00000101) == 0x00000101) break;
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+        // Firmware can update SSP settings while running. Restore them only
+        // after the core is stalled and reset, while its MMIO is powered.
         if (sspTouched) {
             current = READ_REGISTER_ULONG((PULONG)(dsp + 0x10004));
             WRITE_REGISTER_ULONG((PULONG)(dsp + 0x10004),
@@ -720,11 +727,6 @@ cleanup:
             result->Ssp0After = READ_REGISTER_ULONG((PULONG)(dsp + 0x10004));
             result->Ssp1After = READ_REGISTER_ULONG((PULONG)(dsp + 0x11004));
             result->Ssp2After = READ_REGISTER_ULONG((PULONG)(dsp + 0x12004));
-        }
-        WRITE_REGISTER_ULONG(adspcs, READ_REGISTER_ULONG(adspcs) | 0x00000101);
-        for (i = 0; i < 50; ++i) {
-            if ((READ_REGISTER_ULONG(adspcs) & 0x00000101) == 0x00000101) break;
-            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
         }
         WRITE_REGISTER_ULONG(adspcs,
                              READ_REGISTER_ULONG(adspcs) & ~0x00010000UL);
@@ -745,6 +747,31 @@ cleanup:
     result->RestoredPpctl = READ_REGISTER_ULONG(ppctl);
     result->RestoredHipcidr = READ_REGISTER_ULONG(hipcidr);
     result->RestoredHipcida = READ_REGISTER_ULONG(hipcida);
+    if (CaptureIpc3Ready) {
+        readyResult->HipctdrAfterCleanup =
+            READ_REGISTER_ULONG((PULONG)(dsp + 0xc0));
+        readyResult->HipctdaAfterCleanup =
+            READ_REGISTER_ULONG((PULONG)(dsp + 0xc4));
+        if (result->RestoredAdspcs != result->BeforeAdspcs)
+            readyResult->CleanupFlags |= 1;
+        if (result->RestoredOutputControl != beforeOutputControl)
+            readyResult->CleanupFlags |= 2;
+        if (result->RestoredPpctl != beforePpctl)
+            readyResult->CleanupFlags |= 4;
+        if (READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != 0 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != 0 ||
+            READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 0 ||
+            READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 0 ||
+            READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0)
+            readyResult->CleanupFlags |= 8;
+        if (dmaResult->SpibValueRestored != dmaResult->SpibValueBefore ||
+            dmaResult->SpibControlRestored != dmaResult->SpibControlBefore)
+            readyResult->CleanupFlags |= 16;
+        if (((result->Ssp0After ^ result->Ssp0Before) & 0x03000000) != 0 ||
+            ((result->Ssp1After ^ result->Ssp1Before) & 0x03000000) != 0 ||
+            ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0)
+            readyResult->CleanupFlags |= 32;
+    }
     if (result->RestoredAdspcs != result->BeforeAdspcs ||
         result->RestoredOutputControl != beforeOutputControl ||
         result->RestoredPpctl != beforePpctl ||

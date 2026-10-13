@@ -49,7 +49,7 @@ public static class SofProbeClient {
     public static uint[] Exchange(string path, uint code, byte[] input) {
         using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U || code == 0x22A01CU || code == 0x22A024U || code == 0x22A028U || code == 0x22A02CU || code == 0x22A030U) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[code == 0x22A030U ? 176 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))];
+            byte[] bytes = new byte[code == 0x22A030U ? 188 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
@@ -102,12 +102,21 @@ if ($TestIpc3Ready) {
         MailboxSize = $values[41]
         MailboxCommand = ('0x{0:X8}' -f $values[42])
         ReadyPolls = $values[43]
+        HipctdrAfterCleanup = ('0x{0:X8}' -f $values[44])
+        HipctdaAfterCleanup = ('0x{0:X8}' -f $values[45])
+        CleanupFlags = ('0x{0:X8}' -f $values[46])
         OutputStatus = ('0x{0:X2}' -f $values[27])
         SpibControlRestored = ('0x{0:X8}' -f $values[36])
         SpibValueRestored = $values[37]
         RestoredAdspcs = ('0x{0:X8}' -f $values[11])
         RestoredOutputControl = ('0x{0:X8}' -f $values[12])
         RestoredPpctl = ('0x{0:X8}' -f $values[13])
+        Ssp0Before = ('0x{0:X8}' -f $values[16])
+        Ssp0After = ('0x{0:X8}' -f $values[17])
+        Ssp1Before = ('0x{0:X8}' -f $values[18])
+        Ssp1After = ('0x{0:X8}' -f $values[19])
+        Ssp2Before = ('0x{0:X8}' -f $values[20])
+        Ssp2After = ('0x{0:X8}' -f $values[21])
         Result = $values[22]
     } | Format-List
     if ($values[22] -ne 0 -or ($values[28] -band 0x00ffffff) -ne 5 -or
