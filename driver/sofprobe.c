@@ -368,6 +368,8 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     PULONG adspcs;
     PULONG hipcidr;
     PULONG hipcida;
+    PULONG spibControl;
+    PULONG spibValue;
     ULONG beforeOutputControl;
     ULONG beforePpctl;
     ULONG current;
@@ -381,6 +383,9 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     BOOLEAN powerRequested = FALSE;
     BOOLEAN sspTouched = FALSE;
     BOOLEAN dmaStarted = FALSE;
+    BOOLEAN spibTouched = FALSE;
+    BOOLEAN fwEntered = FALSE;
+    ULONGLONG firmwareDeadline;
     size_t resultBytes = RunFirmwareDma ? sizeof(SOFPROBE_FIRMWARE_DMA_RESULT)
                                         : sizeof(SOFPROBE_ROM_ENTRY_RESULT);
     NTSTATUS status;
@@ -439,6 +444,10 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     adspcs = (PULONG)(dsp + 0x04);
     hipcidr = (PULONG)(dsp + 0xd0);
     hipcida = (PULONG)(dsp + 0xd4);
+    // GCAP 0x9701 exposes seven capture streams, so output stream 0 is
+    // global stream index 7. SPIB capability is at 0x700 on this N100.
+    spibControl = (PULONG)(hda + 0x704);
+    spibValue = (PULONG)(hda + 0x740);
     beforeOutputControl = READ_REGISTER_ULONG(outputControl);
     beforePpctl = READ_REGISTER_ULONG(ppctl);
     if (READ_REGISTER_USHORT((PUSHORT)hda) != 0x9701 ||
@@ -453,7 +462,10 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
         READ_REGISTER_ULONG(adspcs) != 0x00000f0f ||
         READ_REGISTER_ULONG(hipcidr) != 0 ||
         READ_REGISTER_ULONG(hipcida) != 0 ||
-        READ_REGISTER_ULONG((PULONG)(dsp + 0xe8)) != 0) {
+        READ_REGISTER_ULONG((PULONG)(dsp + 0xe8)) != 0 ||
+        (RunFirmwareDma &&
+         ((READ_REGISTER_ULONG(spibControl) & 0x80) != 0 ||
+          READ_REGISTER_ULONG(spibValue) != 0))) {
         status = STATUS_DEVICE_CONFIGURATION_ERROR;
         goto finish;
     }
@@ -463,7 +475,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     result->RomControl = 0x81004000;
     Context->RomEntryAttempted = TRUE;
 
-    // The code-loader BDL is staged, but this test never sets output RUN.
+    // Set up the staged code-loader BDL while the stream is stopped.
     WRITE_REGISTER_ULONG(outputControl, beforeOutputControl | 1);
     for (i = 0; i < 100; ++i) {
         if (READ_REGISTER_ULONG(outputControl) & 1) break;
@@ -502,6 +514,22 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
         READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0x40) {
         result->Result = 2;
         goto cleanup;
+    }
+    if (RunFirmwareDma) {
+        dmaResult->SpibControlBefore = READ_REGISTER_ULONG(spibControl);
+        dmaResult->SpibValueBefore = READ_REGISTER_ULONG(spibValue);
+        spibTouched = TRUE;
+        WRITE_REGISTER_ULONG(spibControl,
+                             dmaResult->SpibControlBefore | 0x80);
+        WRITE_REGISTER_ULONG(spibValue, 524288);
+        dmaResult->SpibControlConfigured = READ_REGISTER_ULONG(spibControl);
+        dmaResult->SpibValueConfigured = READ_REGISTER_ULONG(spibValue);
+        if (dmaResult->SpibControlConfigured !=
+                (dmaResult->SpibControlBefore | 0x80) ||
+            dmaResult->SpibValueConfigured != 524288) {
+            result->Result = 13;
+            goto cleanup;
+        }
     }
 
     // Follow the Alder Lake-N Linux ROM ordering: power, ROM IPC, release
@@ -587,9 +615,13 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
         if (i == 100) result->Result = 9;
         if (result->Result == 0) {
             // Linux allows up to 3 seconds for base firmware to enter.
-            for (i = 0; i < 3000; ++i) {
+            firmwareDeadline = KeQueryInterruptTime() + 30000000ULL;
+            for (i = 0; KeQueryInterruptTime() < firmwareDeadline; ++i) {
                 current = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
-                if ((current & 0x00ffffff) == 5) break;
+                if ((current & 0x00ffffff) == 5) {
+                    fwEntered = TRUE;
+                    break;
+                }
                 if (READ_REGISTER_UCHAR(hda + 0x163) & 0x18) {
                     result->Result = 10;
                     break;
@@ -599,7 +631,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
             dmaResult->FirmwarePolls = i;
             dmaResult->FirmwareStatus = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
             dmaResult->FirmwareError = READ_REGISTER_ULONG((PULONG)(dsp + 0x80004));
-            if (i == 3000 && result->Result == 0) result->Result = 11;
+            if (!fwEntered && result->Result == 0) result->Result = 11;
         }
         dmaResult->OutputPosition = READ_REGISTER_ULONG((PULONG)(hda + 0x164));
         dmaResult->OutputStatus = READ_REGISTER_UCHAR(hda + 0x163);
@@ -623,6 +655,12 @@ cleanup:
             goto finish;
         }
         WRITE_REGISTER_UCHAR(hda + 0x163, 0x1c);
+    }
+    if (spibTouched) {
+        WRITE_REGISTER_ULONG(spibValue, dmaResult->SpibValueBefore);
+        WRITE_REGISTER_ULONG(spibControl, dmaResult->SpibControlBefore);
+        dmaResult->SpibValueRestored = READ_REGISTER_ULONG(spibValue);
+        dmaResult->SpibControlRestored = READ_REGISTER_ULONG(spibControl);
     }
     if (powerRequested) {
         if (result->RomStatus == 0 && result->Result != 0 &&
@@ -679,6 +717,9 @@ cleanup:
         READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 0 ||
         READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 0 ||
         READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0 ||
+        (spibTouched &&
+         (dmaResult->SpibValueRestored != dmaResult->SpibValueBefore ||
+          dmaResult->SpibControlRestored != dmaResult->SpibControlBefore)) ||
         (sspTouched &&
          (((result->Ssp0After ^ result->Ssp0Before) & 0x03000000) != 0 ||
           ((result->Ssp1After ^ result->Ssp1Before) & 0x03000000) != 0 ||

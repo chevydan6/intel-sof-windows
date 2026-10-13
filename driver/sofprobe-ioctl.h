@@ -183,4 +183,10 @@ typedef struct _SOFPROBE_FIRMWARE_DMA_RESULT {
     ULONG FirmwareError;
     ULONG FirmwarePolls;
     ULONG StopPolls;
+    ULONG SpibControlBefore;
+    ULONG SpibValueBefore;
+    ULONG SpibControlConfigured;
+    ULONG SpibValueConfigured;
+    ULONG SpibControlRestored;
+    ULONG SpibValueRestored;
 } SOFPROBE_FIRMWARE_DMA_RESULT, *PSOFPROBE_FIRMWARE_DMA_RESULT;

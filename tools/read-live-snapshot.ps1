@@ -6,6 +6,7 @@ param([switch]$PulseCore0, [switch]$TestDmaAllocation,
       [switch]$TestCaptureDma, [switch]$TestRomEntry,
       [switch]$TestFirmwareDma)
 $ErrorActionPreference = 'Stop'
+trap { [Console]::Error.WriteLine($_.ToString()); exit 1 }
 $selected = 0
 if ($PulseCore0) { $selected++ }
 if ($TestDmaAllocation) { $selected++ }
@@ -47,7 +48,7 @@ public static class SofProbeClient {
     public static uint[] Exchange(string path, uint code, byte[] input) {
         using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U || code == 0x22A01CU || code == 0x22A024U || code == 0x22A028U || code == 0x22A02CU) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[code == 0x22A02CU ? 128 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32)))];
+            byte[] bytes = new byte[code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32)))];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
@@ -102,6 +103,12 @@ if ($TestFirmwareDma) {
         FirmwareError = ('0x{0:X8}' -f $values[29])
         FirmwarePolls = $values[30]
         StopPolls = $values[31]
+        SpibControlBefore = ('0x{0:X8}' -f $values[32])
+        SpibValueBefore = $values[33]
+        SpibControlConfigured = ('0x{0:X8}' -f $values[34])
+        SpibValueConfigured = $values[35]
+        SpibControlRestored = ('0x{0:X8}' -f $values[36])
+        SpibValueRestored = $values[37]
         RestoredAdspcs = ('0x{0:X8}' -f $values[11])
         RestoredOutputControl = ('0x{0:X8}' -f $values[12])
         RestoredPpctl = ('0x{0:X8}' -f $values[13])
@@ -111,7 +118,8 @@ if ($TestFirmwareDma) {
     } | Format-List
     if ($values[22] -ne 0 -or ($values[28] -band 0x00ffffff) -ne 5 -or
         $values[11] -ne $values[1] -or $values[12] -ne 0x00040000 -or
-        $values[13] -ne 0x40000000) {
+        $values[13] -ne 0x40000000 -or $values[36] -ne $values[32] -or
+        $values[37] -ne $values[33]) {
         throw 'Firmware DMA, firmware entry, or register restoration did not complete'
     }
     return
