@@ -65,6 +65,10 @@ typedef struct _SOFPROBE_ACX_STATUS {
     ULONG CreateAttempts;
     ULONG LastFailureStage;
     ULONG LastFailureStatus;
+    ULONG StartupCount;
+    ULONG StartupStage;
+    ULONG StartupStatus;
+    ULONG HardwareReady;
 } SOFPROBE_ACX_STATUS, *PSOFPROBE_ACX_STATUS;
 
 typedef struct _SOFPROBE_SNAPSHOT {

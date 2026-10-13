@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'driver/acx/**'
+      - 'driver/sofprobe.c'
+      - 'driver/sofprobe-ioctl.h'
       - '.github/workflows/build-acx.yml'
   workflow_dispatch:
 

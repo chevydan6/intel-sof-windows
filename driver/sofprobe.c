@@ -6,6 +6,8 @@
 #include <wdf.h>
 #ifdef SOFPLAY_INTEGRATED
 #include <acx.h>
+#include <bcrypt.h>
+EVT_WDF_DEVICE_D0_ENTRY SofPlayEvtD0Entry;
 NTSTATUS SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
                                     _Out_ ACXCIRCUIT *Circuit);
 #endif
@@ -51,6 +53,13 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN TonePcmConfigured;
     BOOLEAN ToneTriggerActive;
 #ifdef SOFPLAY_INTEGRATED
+    WDFWAITLOCK AcxPowerLock;
+    WDFSPINLOCK AcxBufferLock;
+    BOOLEAN AcxHardwareReady;
+    PUCHAR AcxRing;
+    ULONG AcxStartupCount;
+    ULONG AcxStartupStage;
+    NTSTATUS AcxStartupStatus;
     ACXCIRCUIT RenderCircuit;
     BOOLEAN RenderCircuitAdded;
     volatile LONG AcxStreamClaimed;
@@ -128,39 +137,57 @@ SofProbeAcxRecordFailure(_In_ WDFDEVICE Device, _In_ ULONG Stage,
 }
 
 NTSTATUS
-SofProbeAcxGetAudioRing(_In_ WDFDEVICE Device,
-                        _Out_ PUCHAR *Buffer,
-                        _Out_ PULONG Bytes)
+SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
-    PHYSICAL_ADDRESS address;
-    ULONG offset;
-    if (!context->SessionActive || !context->TonePrepared ||
-        !context->TonePcmConfigured || context->ToneAudio == NULL) {
-        return STATUS_DEVICE_NOT_READY;
+    NTSTATUS status = STATUS_DEVICE_NOT_READY;
+    WdfSpinLockAcquire(context->AcxBufferLock);
+    if (context->AcxHardwareReady && context->AcxRing != NULL) {
+        RtlZeroMemory(context->AcxRing, SOFPROBE_TONE_BYTES);
+        *Bytes = SOFPROBE_TONE_BYTES;
+        status = STATUS_SUCCESS;
     }
-    address = WdfCommonBufferGetAlignedLogicalAddress(context->ToneAudio);
-    offset = (ULONG)((((ULONGLONG)address.QuadPart + PAGE_SIZE - 1) &
-                      ~((ULONGLONG)PAGE_SIZE - 1)) -
-                     (ULONGLONG)address.QuadPart);
-    *Buffer = (PUCHAR)WdfCommonBufferGetAlignedVirtualAddress(
-        context->ToneAudio) + offset;
-    *Bytes = SOFPROBE_TONE_BYTES;
-    RtlZeroMemory(*Buffer, *Bytes);
-    return STATUS_SUCCESS;
+    WdfSpinLockRelease(context->AcxBufferLock);
+    return status;
+}
+
+NTSTATUS
+SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
+                       _In_reads_bytes_(Bytes) const UCHAR *Source,
+                       _In_ ULONG Packet, _In_ ULONG Bytes)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    NTSTATUS status = STATUS_DEVICE_NOT_READY;
+    ULONG offset;
+    ULONG first;
+    if (Bytes == 0 || Bytes > SOFPROBE_TONE_BYTES) return STATUS_INVALID_PARAMETER;
+    WdfSpinLockAcquire(context->AcxBufferLock);
+    if (context->AcxHardwareReady && context->AcxRing != NULL) {
+        offset = (ULONG)(((ULONGLONG)Packet * Bytes) % SOFPROBE_TONE_BYTES);
+        first = min(Bytes, SOFPROBE_TONE_BYTES - offset);
+        RtlCopyMemory(context->AcxRing + offset, Source, first);
+        if (first < Bytes) RtlCopyMemory(context->AcxRing, Source + first, Bytes - first);
+        KeMemoryBarrier();
+        status = STATUS_SUCCESS;
+    }
+    WdfSpinLockRelease(context->AcxBufferLock);
+    return status;
 }
 
 NTSTATUS
 SofProbeAcxGetPosition(_In_ WDFDEVICE Device,
-                       _Out_ PULONG Position,
-                       _Out_ PUCHAR Status)
+                       _Out_ PULONG Position, _Out_ PUCHAR Status)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
-    if (!context->TonePrepared || context->ToneHda == NULL)
-        return STATUS_DEVICE_NOT_READY;
-    *Position = READ_REGISTER_ULONG((PULONG)(context->ToneHda + 0x164));
-    *Status = READ_REGISTER_UCHAR(context->ToneHda + 0x163);
-    return STATUS_SUCCESS;
+    NTSTATUS status = STATUS_DEVICE_NOT_READY;
+    WdfSpinLockAcquire(context->AcxBufferLock);
+    if (context->AcxHardwareReady && context->ToneHda != NULL) {
+        *Position = READ_REGISTER_ULONG((PULONG)(context->ToneHda + 0x164));
+        *Status = READ_REGISTER_UCHAR(context->ToneHda + 0x163);
+        status = STATUS_SUCCESS;
+    }
+    WdfSpinLockRelease(context->AcxBufferLock);
+    return status;
 }
 
 static NTSTATUS
@@ -194,8 +221,8 @@ SofProbeAcxTrigger(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
     return STATUS_SUCCESS;
 }
 
-NTSTATUS
-SofProbeAcxStart(_In_ WDFDEVICE Device)
+static NTSTATUS
+SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     ULONG i;
@@ -225,8 +252,8 @@ SofProbeAcxStart(_In_ WDFDEVICE Device)
     return status;
 }
 
-NTSTATUS
-SofProbeAcxPause(_In_ WDFDEVICE Device)
+static NTSTATUS
+SofProbeAcxPauseLocked(_In_ WDFDEVICE Device)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     ULONG i;
@@ -250,6 +277,29 @@ SofProbeAcxPause(_In_ WDFDEVICE Device)
     WRITE_REGISTER_UCHAR(context->ToneHda + 0x163, 0x1c);
     return status;
 }
+NTSTATUS
+SofProbeAcxStart(_In_ WDFDEVICE Device)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    NTSTATUS status;
+    WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+    status = context->AcxHardwareReady ? SofProbeAcxStartLocked(Device)
+                                       : STATUS_DEVICE_NOT_READY;
+    WdfWaitLockRelease(context->AcxPowerLock);
+    return status;
+}
+
+NTSTATUS
+SofProbeAcxPause(_In_ WDFDEVICE Device)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    NTSTATUS status;
+    WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+    status = context->AcxHardwareReady ? SofProbeAcxPauseLocked(Device) : STATUS_SUCCESS;
+    WdfWaitLockRelease(context->AcxPowerLock);
+    return status;
+}
+
 #endif
 
 static VOID
@@ -316,11 +366,11 @@ finish:
     WdfRequestComplete(Request, status);
 }
 
-static VOID
-SofProbeStageFirmware(_In_ WDFREQUEST Request,
-                      _In_ PSOFPROBE_DEVICE_CONTEXT Context,
-                      _In_ size_t OutputBufferLength,
-                      _In_ size_t InputBufferLength)
+static NTSTATUS
+SofProbeStageFirmwareImage(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                           _In_reads_bytes_(InputBufferLength) PUCHAR image,
+                           _In_ size_t InputBufferLength,
+                           _Out_ PSOFPROBE_DMA_ALLOCATION_RESULT result)
 {
     typedef struct _IPC3_MANIFEST_HEADER {
         ULONG Magic;
@@ -329,8 +379,6 @@ SofProbeStageFirmware(_In_ WDFREQUEST Request,
         ULONG Version;
     } IPC3_MANIFEST_HEADER;
     IPC3_MANIFEST_HEADER header;
-    PUCHAR image;
-    PSOFPROBE_DMA_ALLOCATION_RESULT result;
     WDFCOMMONBUFFER bdl = NULL;
     WDFCOMMONBUFFER payload = NULL;
     PHYSICAL_ADDRESS bdlAddress;
@@ -339,31 +387,13 @@ SofProbeStageFirmware(_In_ WDFREQUEST Request,
     NTSTATUS status;
 
     if (Context->FirmwarePayload != NULL) {
-        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
-        return;
+        return STATUS_DEVICE_BUSY;
     }
-    if (InputBufferLength != 525056 ||
-        OutputBufferLength < sizeof(*result)) {
-        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-        return;
-    }
-    status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength,
-                                           (PVOID *)&image, NULL);
-    if (!NT_SUCCESS(status)) {
-        WdfRequestComplete(Request, status);
-        return;
-    }
+    if (InputBufferLength != 525056) return STATUS_INVALID_PARAMETER;
     RtlCopyMemory(&header, image, sizeof(header));
     if (header.Magic != 0x6e614d58 || header.FullSize != 768 ||
         header.HeaderSize != 16 || header.Version != 0x01000000) {
-        WdfRequestComplete(Request, STATUS_INVALID_IMAGE_FORMAT);
-        return;
-    }
-    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
-                                            (PVOID *)&result, NULL);
-    if (!NT_SUCCESS(status)) {
-        WdfRequestComplete(Request, status);
-        return;
+        return STATUS_INVALID_IMAGE_FORMAT;
     }
     status = WdfCommonBufferCreate(Context->DmaEnabler, 128,
                                    WDF_NO_OBJECT_ATTRIBUTES, &bdl);
@@ -403,12 +433,35 @@ SofProbeStageFirmware(_In_ WDFREQUEST Request,
     Context->FirmwarePayload = payload;
     bdl = NULL;
     payload = NULL;
-    WdfRequestSetInformation(Request, sizeof(*result));
 
 finish:
     if (payload != NULL) WdfObjectDelete(payload);
     if (bdl != NULL) WdfObjectDelete(bdl);
-    WdfRequestComplete(Request, status);
+    return status;
+}
+
+static VOID
+SofProbeStageFirmware(_In_ WDFREQUEST Request,
+                      _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                      _In_ size_t OutputBufferLength,
+                      _In_ size_t InputBufferLength)
+{
+    PUCHAR image;
+    PSOFPROBE_DMA_ALLOCATION_RESULT result;
+    NTSTATUS status;
+    if (InputBufferLength != 525056 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength,
+                                           (PVOID *)&image, NULL);
+    if (NT_SUCCESS(status))
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                                (PVOID *)&result, NULL);
+    if (NT_SUCCESS(status))
+        status = SofProbeStageFirmwareImage(Context, image, InputBufferLength, result);
+    WdfRequestCompleteWithInformation(Request, status,
+                                       NT_SUCCESS(status) ? sizeof(*result) : 0);
 }
 
 static VOID
@@ -559,12 +612,11 @@ restore:
     WdfRequestComplete(Request, STATUS_SUCCESS);
 }
 
-static VOID
-SofProbeTestRomEntry(_In_ WDFREQUEST Request,
-                     _In_ WDFDEVICE Device,
+static NTSTATUS
+SofProbeBootHardware(_In_ WDFDEVICE Device,
                      _In_ PSOFPROBE_DEVICE_CONTEXT Context,
                      _In_ size_t OutputBufferLength,
-                     _In_ size_t InputBufferLength,
+                     _Out_writes_bytes_(OutputBufferLength) PVOID ResultBuffer,
                      _In_ BOOLEAN RunFirmwareDma,
                      _In_ BOOLEAN CaptureIpc3Ready,
                      _In_ BOOLEAN CaptureIpc3Info,
@@ -572,7 +624,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                      _In_ BOOLEAN QueryIpc3Memory,
                      _In_ BOOLEAN KeepSession)
 {
-    PSOFPROBE_ROM_ENTRY_RESULT result;
+    PSOFPROBE_ROM_ENTRY_RESULT result = (PSOFPROBE_ROM_ENTRY_RESULT)ResultBuffer;
     PSOFPROBE_FIRMWARE_DMA_RESULT dmaResult = NULL;
     PSOFPROBE_IPC3_READY_RESULT readyResult = NULL;
     PSOFPROBE_IPC3_INFO_RESULT infoResult = NULL;
@@ -616,25 +668,16 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                                          : sizeof(SOFPROBE_ROM_ENTRY_RESULT));
     NTSTATUS status;
 
-    if (InputBufferLength != 0 || OutputBufferLength < resultBytes) {
-        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-        return;
-    }
+    if (OutputBufferLength < resultBytes) return STATUS_INVALID_PARAMETER;
     if (Context->RomEntryAttempted) {
-        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
-        return;
+        return STATUS_DEVICE_BUSY;
     }
     if (Context->SessionActive) {
-        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
-        return;
+        return STATUS_DEVICE_BUSY;
     }
     if (Context->FirmwareBdl == NULL || Context->FirmwarePayload == NULL) {
-        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
-        return;
+        return STATUS_DEVICE_NOT_READY;
     }
-    status = WdfRequestRetrieveOutputBuffer(Request, resultBytes,
-                                            (PVOID *)&result, NULL);
-    if (!NT_SUCCESS(status)) goto finish;
     if (RunFirmwareDma) dmaResult = (PSOFPROBE_FIRMWARE_DMA_RESULT)result;
     if (CaptureIpc3Ready) readyResult = (PSOFPROBE_IPC3_READY_RESULT)result;
     if (CaptureIpc3Info) infoResult = (PSOFPROBE_IPC3_INFO_RESULT)result;
@@ -1018,7 +1061,6 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
         MmUnmapIoSpace(hda, 0x1000);
         hda = NULL;
         sessionResult->SessionActive = 1;
-        WdfRequestSetInformation(Request, resultBytes);
         status = STATUS_SUCCESS;
         goto finish;
     }
@@ -1036,8 +1078,7 @@ cleanup:
             // Do not detach the BDL or free memory that hardware may own.
             Context->UnstoppedFirmwareDma = TRUE;
             result->Result = 12;
-            WdfRequestSetInformation(Request, resultBytes);
-            status = STATUS_SUCCESS;
+                status = STATUS_SUCCESS;
             goto finish;
         }
         WRITE_REGISTER_UCHAR(hda + 0x163, 0x1c);
@@ -1158,13 +1199,47 @@ cleanup:
            ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0)))) {
         result->Result = 8;
     }
-    WdfRequestSetInformation(Request, resultBytes);
     status = STATUS_SUCCESS;
 
 finish:
     if (dsp != NULL) MmUnmapIoSpace(dsp, dspMapBytes);
     if (hda != NULL) MmUnmapIoSpace(hda, 0x1000);
-    WdfRequestComplete(Request, status);
+    return status;
+}
+
+static VOID
+SofProbeTestRomEntry(_In_ WDFREQUEST Request,
+                     _In_ WDFDEVICE Device,
+                     _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                     _In_ size_t OutputBufferLength,
+                     _In_ size_t InputBufferLength,
+                     _In_ BOOLEAN RunFirmwareDma,
+                     _In_ BOOLEAN CaptureIpc3Ready,
+                     _In_ BOOLEAN CaptureIpc3Info,
+                     _In_ BOOLEAN AcknowledgeIpc3Ready,
+                     _In_ BOOLEAN QueryIpc3Memory,
+                     _In_ BOOLEAN KeepSession)
+{
+    PVOID result;
+    NTSTATUS status;
+    size_t resultBytes = KeepSession ? sizeof(SOFPROBE_IPC3_SESSION_START_RESULT)
+                       : QueryIpc3Memory ? sizeof(SOFPROBE_IPC3_MEMORY_RESULT)
+                       : AcknowledgeIpc3Ready ? sizeof(SOFPROBE_IPC3_ACK_RESULT)
+                       : CaptureIpc3Info ? sizeof(SOFPROBE_IPC3_INFO_RESULT)
+                       : CaptureIpc3Ready ? sizeof(SOFPROBE_IPC3_READY_RESULT)
+                       : RunFirmwareDma ? sizeof(SOFPROBE_FIRMWARE_DMA_RESULT)
+                       : sizeof(SOFPROBE_ROM_ENTRY_RESULT);
+    if (InputBufferLength != 0 || OutputBufferLength < resultBytes) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, resultBytes, &result, NULL);
+    if (NT_SUCCESS(status))
+        status = SofProbeBootHardware(Device, Context, resultBytes, result,
+            RunFirmwareDma, CaptureIpc3Ready, CaptureIpc3Info,
+            AcknowledgeIpc3Ready, QueryIpc3Memory, KeepSession);
+    WdfRequestCompleteWithInformation(Request, status,
+                                       NT_SUCCESS(status) ? resultBytes : 0);
 }
 
 static VOID
@@ -2013,14 +2088,11 @@ SofProbeStopToneHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     return flags;
 }
 
-static VOID
-SofProbeToneControl(_In_ WDFREQUEST Request,
-                    _In_ PSOFPROBE_DEVICE_CONTEXT Context,
-                    _In_ size_t OutputBufferLength,
-                    _In_ size_t InputBufferLength,
-                    _In_ ULONG Action)
+static NTSTATUS
+SofProbeToneHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                     _Out_ PSOFPROBE_TONE_RESULT result,
+                     _In_ ULONG Action)
 {
-    PSOFPROBE_TONE_RESULT result;
     WDFCOMMONBUFFER bdl = NULL;
     WDFCOMMONBUFFER audio = NULL;
     WDFCOMMONBUFFER table = NULL;
@@ -2041,24 +2113,12 @@ SofProbeToneControl(_In_ WDFREQUEST Request,
     LARGE_INTEGER delay;
     NTSTATUS status = STATUS_SUCCESS;
 
-    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
-        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-        return;
-    }
     if (!Context->SessionActive) {
-        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
-        return;
+        return STATUS_DEVICE_NOT_READY;
     }
     if ((Action == 0 && (Context->TonePrepared || Context->ToneBdl != NULL)) ||
         (Action != 0 && !Context->TonePrepared)) {
-        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
-        return;
-    }
-    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
-                                            (PVOID *)&result, NULL);
-    if (!NT_SUCCESS(status)) {
-        WdfRequestComplete(Request, status);
-        return;
+        return STATUS_DEVICE_BUSY;
     }
     RtlZeroMemory(result, sizeof(*result));
     result->Version = 1;
@@ -2232,12 +2292,27 @@ finish:
     if (table != NULL) WdfObjectDelete(table);
     if (audio != NULL) WdfObjectDelete(audio);
     if (bdl != NULL) WdfObjectDelete(bdl);
-    if (NT_SUCCESS(status)) {
-        WdfRequestSetInformation(Request, sizeof(*result));
-        WdfRequestComplete(Request, STATUS_SUCCESS);
-    } else {
-        WdfRequestComplete(Request, status);
+    return status;
+}
+
+static VOID
+SofProbeToneControl(_In_ WDFREQUEST Request,
+                    _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                    _In_ size_t OutputBufferLength,
+                    _In_ size_t InputBufferLength,
+                    _In_ ULONG Action)
+{
+    PSOFPROBE_TONE_RESULT result;
+    NTSTATUS status;
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
     }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (NT_SUCCESS(status)) status = SofProbeToneHardware(Context, result, Action);
+    WdfRequestCompleteWithInformation(Request, status,
+                                       NT_SUCCESS(status) ? sizeof(*result) : 0);
 }
 
 static VOID
@@ -2427,14 +2502,12 @@ SofProbeAllowedIpc3Command(_In_ ULONG Command)
     }
 }
 
-static VOID
-SofProbeSessionExchange(_In_ WDFREQUEST Request,
-                        _In_ PSOFPROBE_DEVICE_CONTEXT Context,
-                        _In_ size_t OutputBufferLength,
-                        _In_ size_t InputBufferLength)
+static NTSTATUS
+SofProbeExchangeHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                         _In_ PSOFPROBE_IPC3_EXCHANGE_REQUEST input,
+                         _In_ size_t InputBufferLength,
+                         _Out_ PSOFPROBE_IPC3_SESSION_MEMORY_RESULT result)
 {
-    PSOFPROBE_IPC3_EXCHANGE_REQUEST input;
-    PSOFPROBE_IPC3_SESSION_MEMORY_RESULT result;
     ULONG words[96];
     ULONG size;
     ULONG i;
@@ -2442,24 +2515,14 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
     PULONG hipcidr;
     PULONG hipcida;
     LARGE_INTEGER delay;
-    NTSTATUS status;
 
     if (InputBufferLength < FIELD_OFFSET(SOFPROBE_IPC3_EXCHANGE_REQUEST,
                                          RequestWords) + 8 ||
-        InputBufferLength > sizeof(SOFPROBE_IPC3_EXCHANGE_REQUEST) ||
-        OutputBufferLength < sizeof(*result)) {
-        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-        return;
+        InputBufferLength > sizeof(SOFPROBE_IPC3_EXCHANGE_REQUEST)) {
+        return STATUS_INVALID_PARAMETER;
     }
     if (!Context->SessionActive || Context->SessionDsp == NULL) {
-        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
-        return;
-    }
-    status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength,
-                                           (PVOID *)&input, NULL);
-    if (!NT_SUCCESS(status)) {
-        WdfRequestComplete(Request, status);
-        return;
+        return STATUS_DEVICE_NOT_READY;
     }
     size = input->RequestSize;
     if (input->Version != 1 || size < 8 || size > sizeof(words) ||
@@ -2468,16 +2531,14 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
                                           RequestWords) + size ||
         input->RequestWords[0] != size ||
         !SofProbeAllowedIpc3Command(input->RequestWords[1])) {
-        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-        return;
+        return STATUS_INVALID_PARAMETER;
     }
     RtlCopyMemory(words, input->RequestWords, size);
     if (words[1] == 0x60010000) {
         PHYSICAL_ADDRESS tableAddress;
         if (!Context->TonePrepared || Context->TonePcmConfigured ||
             Context->TonePageTable == NULL || size != 108) {
-            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
-            return;
+            return STATUS_INVALID_DEVICE_STATE;
         }
         tableAddress = WdfCommonBufferGetAlignedLogicalAddress(
             Context->TonePageTable);
@@ -2489,34 +2550,24 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
             words[17] != 48000 || words[18] != 0x00020001 ||
             words[19] != 0x00040004 ||
             words[20] != SOFPROBE_TONE_PERIOD_BYTES || words[21] != 1) {
-            WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-            return;
+            return STATUS_INVALID_PARAMETER;
         }
     } else if (words[1] == 0x60040000) {
         if (size != 12 || words[2] != 0 ||
             !Context->TonePcmConfigured || !Context->ToneDmaRunning ||
             Context->ToneTriggerActive) {
-            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
-            return;
+            return STATUS_INVALID_DEVICE_STATE;
         }
     } else if (words[1] == 0x60050000) {
         if (size != 12 || words[2] != 0 ||
             !Context->ToneTriggerActive) {
-            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
-            return;
+            return STATUS_INVALID_DEVICE_STATE;
         }
     } else if (words[1] == 0x60030000) {
         if (size != 12 || words[2] != 0 ||
             !Context->TonePcmConfigured || Context->ToneTriggerActive) {
-            WdfRequestComplete(Request, STATUS_INVALID_DEVICE_STATE);
-            return;
+            return STATUS_INVALID_DEVICE_STATE;
         }
-    }
-    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
-                                            (PVOID *)&result, NULL);
-    if (!NT_SUCCESS(status)) {
-        WdfRequestComplete(Request, status);
-        return;
     }
     RtlZeroMemory(result, sizeof(*result));
     result->Version = 1;
@@ -2569,9 +2620,37 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
     }
     WRITE_REGISTER_ULONG(hipcida, 0x80000000);
 finish:
-    WdfRequestSetInformation(Request, sizeof(*result));
-    WdfRequestComplete(Request, STATUS_SUCCESS);
+    return STATUS_SUCCESS;
 }
+
+static VOID
+SofProbeSessionExchange(_In_ WDFREQUEST Request,
+                        _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                        _In_ size_t OutputBufferLength,
+                        _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_IPC3_EXCHANGE_REQUEST input;
+    PSOFPROBE_IPC3_SESSION_MEMORY_RESULT result;
+    NTSTATUS status;
+    if (InputBufferLength < FIELD_OFFSET(SOFPROBE_IPC3_EXCHANGE_REQUEST, RequestWords) + 8 ||
+        InputBufferLength > sizeof(*input) || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength,
+                                           (PVOID *)&input, NULL);
+    if (NT_SUCCESS(status))
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                                (PVOID *)&result, NULL);
+    if (NT_SUCCESS(status))
+        status = SofProbeExchangeHardware(Context, input, InputBufferLength, result);
+    WdfRequestCompleteWithInformation(Request, status,
+                                       NT_SUCCESS(status) ? sizeof(*result) : 0);
+}
+
+#ifdef SOFPLAY_INTEGRATED
+#include "acx/sofplay-startup.inc"
+#endif
 
 NTSTATUS
 DriverEntry(
@@ -2627,6 +2706,9 @@ SofProbeEvtDeviceAdd(
     callbacks.EvtDevicePrepareHardware = SofProbeEvtPrepareHardware;
     callbacks.EvtDeviceReleaseHardware = SofProbeEvtReleaseHardware;
     callbacks.EvtDeviceD0Exit = SofProbeEvtD0Exit;
+#ifdef SOFPLAY_INTEGRATED
+    callbacks.EvtDeviceD0Entry = SofPlayEvtD0Entry;
+#endif
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &callbacks);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, SOFPROBE_DEVICE_CONTEXT);
     attributes.ExecutionLevel = WdfExecutionLevelPassive;
@@ -2634,6 +2716,12 @@ SofProbeEvtDeviceAdd(
     if (!NT_SUCCESS(status)) return status;
     context = SofProbeGetContext(device);
 #ifdef SOFPLAY_INTEGRATED
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = device;
+    status = WdfWaitLockCreate(&attributes, &context->AcxPowerLock);
+    if (!NT_SUCCESS(status)) return status;
+    status = WdfSpinLockCreate(&attributes, &context->AcxBufferLock);
+    if (!NT_SUCCESS(status)) return status;
     ACX_DEVICE_CONFIG_INIT(&acxConfig);
     status = AcxDeviceInitialize(device, &acxConfig);
     if (!NT_SUCCESS(status)) return status;
@@ -2679,6 +2767,14 @@ SofProbeEvtIoDeviceControl(
     PUCHAR dsp = NULL;
     NTSTATUS status;
 
+#ifdef SOFPLAY_INTEGRATED
+    if (IoControlCode != IOCTL_SOFPROBE_ACX_STATUS &&
+        IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
+        IoControlCode != IOCTL_SOFPROBE_READ_STREAM0) {
+        WdfRequestComplete(Request, STATUS_ACCESS_DENIED);
+        return;
+    }
+#endif
     if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
         IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0 &&
         IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION &&
@@ -2713,6 +2809,8 @@ SofProbeEvtIoDeviceControl(
     // A running firmware session owns the DSP and its code-loader state.
     // Other diagnostics assume the pre-boot register baseline.
     if (context->SessionActive &&
+        IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
+        IoControlCode != IOCTL_SOFPROBE_READ_STREAM0 &&
         IoControlCode != IOCTL_SOFPROBE_SESSION_MEMORY &&
         IoControlCode != IOCTL_SOFPROBE_STOP_SESSION &&
         IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE &&
@@ -2770,7 +2868,12 @@ SofProbeEvtIoDeviceControl(
             return;
         }
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
-        acx->Version = 1;
+        acx->Version = 2;
+        acx->StartupCount = context->AcxStartupCount;
+        acx->StartupStage = context->AcxStartupStage;
+        acx->StartupStatus = (ULONG)context->AcxStartupStatus;
+        acx->HardwareReady = context->AcxHardwareReady;
+
         acx->StreamsCreated = (ULONG)InterlockedCompareExchange(
             &context->AcxStreamsCreated, 0, 0);
         acx->RunCalls = (ULONG)InterlockedCompareExchange(
@@ -2924,16 +3027,26 @@ SofProbeEvtD0Exit(
     SOFPROBE_IPC3_SESSION_STOP_RESULT result;
 
     UNREFERENCED_PARAMETER(TargetState);
-    if (context->SessionActive) {
 #ifdef SOFPLAY_INTEGRATED
-        if (context->AcxTimer != NULL)
-            WdfTimerStop(context->AcxTimer, TRUE);
+    WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+    WdfSpinLockAcquire(context->AcxBufferLock);
+    context->AcxHardwareReady = FALSE;
+    context->AcxRing = NULL;
+    WdfSpinLockRelease(context->AcxBufferLock);
+    if (context->AcxTimer != NULL) WdfTimerStop(context->AcxTimer, TRUE);
+    if (context->ToneTriggerActive) (VOID)SofProbeAcxPauseLocked(Device);
 #endif
+    if (context->SessionActive) {
         SofProbeStopSessionHardware(context, &result);
+        // Re-entry is allowed only after verified DMA/power restoration.
+        if (result.Result == 0) context->RomEntryAttempted = FALSE;
         KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
                    "SOFPROBE: D0 exit session stop result=%lu flags=%08lx\n",
                    result.Result, result.CleanupFlags));
     }
+#ifdef SOFPLAY_INTEGRATED
+    WdfWaitLockRelease(context->AcxPowerLock);
+#endif
     return STATUS_SUCCESS;
 }
 
@@ -2957,6 +3070,12 @@ SofProbeEvtReleaseHardware(
             if (!NT_SUCCESS(status)) return status;
             context->RenderCircuitAdded = FALSE;
         }
+#endif
+#ifdef SOFPLAY_INTEGRATED
+        WdfSpinLockAcquire(context->AcxBufferLock);
+        context->AcxHardwareReady = FALSE;
+        context->AcxRing = NULL;
+        WdfSpinLockRelease(context->AcxBufferLock);
 #endif
         context->ResourcesReady = FALSE;
         // Hardware access belongs in D0Exit. A surprise removal can make

@@ -27,9 +27,10 @@ VOID SofProbeAcxSetTimer(_In_ WDFDEVICE Device, _In_opt_ WDFTIMER Timer);
 VOID SofProbeAcxRecord(_In_ WDFDEVICE Device, _In_ ULONG Event);
 VOID SofProbeAcxRecordFailure(_In_ WDFDEVICE Device, _In_ ULONG Stage,
                              _In_ NTSTATUS Status);
-NTSTATUS SofProbeAcxGetAudioRing(_In_ WDFDEVICE Device,
-                                _Out_ PUCHAR *Buffer,
-                                _Out_ PULONG Bytes);
+NTSTATUS SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes);
+NTSTATUS SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
+                                _In_reads_bytes_(Bytes) const UCHAR *Source,
+                                _In_ ULONG Packet, _In_ ULONG Bytes);
 NTSTATUS SofProbeAcxGetPosition(_In_ WDFDEVICE Device,
                                _Out_ PULONG Position,
                                _Out_ PUCHAR Status);
@@ -56,7 +57,6 @@ typedef struct _SOFPLAY_STREAM_CONTEXT {
     PACX_RTPACKET Packets;
     ULONG PacketCount;
     ULONG PacketSize;
-    PUCHAR Ring;
     ULONG RingBytes;
     ULONG LastPosition;
     ULONGLONG LinearPosition;
@@ -417,9 +417,7 @@ NTSTATUS
 SofPlayEvtStreamPrepare(_In_ ACXSTREAM Stream)
 {
     PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
-    NTSTATUS status = SofProbeAcxGetAudioRing(context->Device,
-                                              &context->Ring,
-                                              &context->RingBytes);
+    NTSTATUS status = SofProbeAcxPrepareBuffer(context->Device, &context->RingBytes);
     if (!NT_SUCCESS(status))
         SofProbeAcxRecordFailure(context->Device, 7, status);
     if (NT_SUCCESS(status)) {
@@ -439,7 +437,6 @@ SofPlayEvtStreamRelease(_In_ ACXSTREAM Stream)
         (VOID)SofProbeAcxPause(context->Device);
         context->Running = FALSE;
     }
-    context->Ring = NULL;
     context->RingBytes = 0;
     return STATUS_SUCCESS;
 }
@@ -451,7 +448,7 @@ SofPlayEvtStreamRun(_In_ ACXSTREAM Stream)
     NTSTATUS status;
     ULONG position;
     UCHAR streamStatus;
-    if (context->Ring == NULL || context->Packets == NULL)
+    if (context->RingBytes == 0 || context->Packets == NULL)
         return STATUS_DEVICE_NOT_READY;
     status = SofProbeAcxStart(context->Device);
     if (!NT_SUCCESS(status)) {
@@ -497,26 +494,17 @@ SofPlayEvtSetPacket(_In_ ACXSTREAM Stream, _In_ ULONG Packet,
                      _In_ ULONG Flags, _In_ ULONG EosPacketLength)
 {
     PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
-    ULONG offset;
-    ULONG first;
     PUCHAR source;
+    NTSTATUS status;
     UNREFERENCED_PARAMETER(Flags);
     UNREFERENCED_PARAMETER(EosPacketLength);
-    if (context->Packets == NULL || context->Ring == NULL ||
-        context->RingBytes == 0)
+    if (context->Packets == NULL || context->PacketCount == 0 || context->RingBytes == 0)
         return STATUS_DEVICE_NOT_READY;
     source = (PUCHAR)MmGetMdlVirtualAddress(
-        context->Packets[Packet % context->PacketCount]
-            .RtPacketBuffer.u.MdlType.Mdl);
+        context->Packets[Packet % context->PacketCount].RtPacketBuffer.u.MdlType.Mdl);
     source += context->Packets[Packet % context->PacketCount].RtPacketOffset;
-    offset = (ULONG)(((ULONGLONG)Packet * context->PacketSize) %
-                     context->RingBytes);
-    first = min(context->PacketSize, context->RingBytes - offset);
-    RtlCopyMemory(context->Ring + offset, source, first);
-    if (first < context->PacketSize)
-        RtlCopyMemory(context->Ring, source + first,
-                      context->PacketSize - first);
-    KeMemoryBarrier();
+    status = SofProbeAcxWritePacket(context->Device, source, Packet, context->PacketSize);
+    if (!NT_SUCCESS(status)) return status;
     SofProbeAcxRecord(context->Device, 3);
     return STATUS_SUCCESS;
 }

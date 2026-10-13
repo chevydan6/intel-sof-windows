@@ -123,7 +123,7 @@ if ($ReadStream0) {
     } | Format-List
     return
 }
-if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
+if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -eq 2)) { throw "Unsupported snapshot version: $($values[0])" }
 if ($AcxStatus) {
     [pscustomobject]@{
         StreamsCreated = $values[1]
@@ -135,6 +135,10 @@ if ($AcxStatus) {
         CreateAttempts = $values[7]
         LastFailureStage = $values[8]
         LastFailureStatus = ('0x{0:X8}' -f $values[9])
+        StartupCount = if ($values[0] -ge 2) { $values[10] } else { $null }
+        StartupStage = if ($values[0] -ge 2) { $values[11] } else { $null }
+        StartupStatus = if ($values[0] -ge 2) { '0x{0:X8}' -f $values[12] } else { $null }
+        HardwareReady = if ($values[0] -ge 2) { $values[13] } else { $null }
     } | Format-List
     return
 }
