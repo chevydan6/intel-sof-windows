@@ -1,5 +1,7 @@
 # N100 playback echo investigation
 
+After the reboot tests below, Dan confirmed that the echo was gone. He reported remaining distortion resembling clipping; that follow-up is documented in [speaker output level](n100-speaker-gain.md).
+
 On 2026-10-14, the user confirmed that ordinary YouTube audio reaches the speakers with the automatically initialized ACX driver, but described distortion and an echo, as though sounds were played twice. Audible output is therefore confirmed; usable audio quality is not.
 
 The reported red error window was consistent with the interactive test harness failing its new-stream assertion. The actual captured failure was `Playback did not advance the expected driver/DMA counters`: while YouTube already owned a shared stream, the WAV completed and packet counters increased, but `RunCalls` stayed at 5. The harness now permits shared-stream reuse and labels the counter evidence accordingly; `-RequireNewStream` retains the stricter check for isolated tests. The laptop did not reboot, no new blue-screen dump appeared, and the user clarified that Windows itself had not blue-screened. This is not evidence of a new kernel crash.

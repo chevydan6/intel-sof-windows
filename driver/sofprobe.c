@@ -7,6 +7,7 @@
 #ifdef SOFPLAY_INTEGRATED
 #include <acx.h>
 #include <bcrypt.h>
+#include "acx/sofplay-samples.h"
 EVT_WDF_DEVICE_D0_ENTRY SofPlayEvtD0Entry;
 NTSTATUS SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
                                     _Out_ ACXCIRCUIT *Circuit);
@@ -220,6 +221,20 @@ SofProbeAcxGetProgress(_In_ WDFDEVICE Device, _Out_ PULONGLONG Bytes,
     return status;
 }
 
+static VOID
+SofProbeAcxCopySpeakerSamples(_Out_writes_bytes_(Bytes) UCHAR *Destination,
+                             _In_reads_bytes_(Bytes) const UCHAR *Source,
+                             _In_ ULONG Bytes)
+{
+    ULONG i;
+    for (i = 0; i < Bytes; i += sizeof(int32_t)) {
+        int32_t sample;
+        RtlCopyMemory(&sample, Source + i, sizeof(sample));
+        sample = SofPlayAttenuateSpeakerSample(sample);
+        RtlCopyMemory(Destination + i, &sample, sizeof(sample));
+    }
+}
+
 NTSTATUS
 SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
                        _In_reads_bytes_(Bytes) const UCHAR *Source,
@@ -229,7 +244,8 @@ SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
     ULONG offset;
     ULONG first;
-    if (Bytes == 0 || Bytes > SOFPROBE_TONE_BYTES) return STATUS_INVALID_PARAMETER;
+    if (Bytes == 0 || Bytes > SOFPROBE_TONE_BYTES || (Bytes & 7) != 0)
+        return STATUS_INVALID_PARAMETER;
     WdfSpinLockAcquire(context->AcxBufferLock);
     status = SofProbeAcxAdvanceLocked(context);
     if (NT_SUCCESS(status)) {
@@ -248,8 +264,9 @@ SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
         }
         offset = (ULONG)(((ULONGLONG)Packet * Bytes) % SOFPROBE_TONE_BYTES);
         first = min(Bytes, SOFPROBE_TONE_BYTES - offset);
-        RtlCopyMemory(context->AcxRing + offset, Source, first);
-        if (first < Bytes) RtlCopyMemory(context->AcxRing, Source + first, Bytes - first);
+        SofProbeAcxCopySpeakerSamples(context->AcxRing + offset, Source, first);
+        if (first < Bytes)
+            SofProbeAcxCopySpeakerSamples(context->AcxRing, Source + first, Bytes - first);
         KeMemoryBarrier();
         status = STATUS_SUCCESS;
     }
@@ -2953,7 +2970,8 @@ SofProbeEvtIoDeviceControl(
             return;
         }
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
-        acx->Version = 4;
+        acx->Version = 5;
+        acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
         acx->StartupCount = context->AcxStartupCount;
         acx->StartupStage = context->AcxStartupStage;
         acx->StartupStatus = (ULONG)context->AcxStartupStatus;
