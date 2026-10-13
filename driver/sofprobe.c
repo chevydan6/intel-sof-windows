@@ -387,6 +387,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     BOOLEAN dmaStarted = FALSE;
     BOOLEAN spibTouched = FALSE;
     BOOLEAN fwEntered = FALSE;
+    ULONG sspUnavailableMask = 0;
     ULONGLONG firmwareDeadline;
     size_t dspMapBytes = CaptureIpc3Ready ? 0x82000 : 0x81000;
     size_t resultBytes = CaptureIpc3Ready ? sizeof(SOFPROBE_IPC3_READY_RESULT)
@@ -713,17 +714,29 @@ cleanup:
         // after the core is stalled and reset, while its MMIO is powered.
         if (sspTouched) {
             current = READ_REGISTER_ULONG((PULONG)(dsp + 0x10004));
-            WRITE_REGISTER_ULONG((PULONG)(dsp + 0x10004),
-                                 (current & ~0x03000000) |
-                                 (result->Ssp0Before & 0x03000000));
+            if (current == 0xffffffff) {
+                sspUnavailableMask |= 1;
+            } else {
+                WRITE_REGISTER_ULONG((PULONG)(dsp + 0x10004),
+                                     (current & ~0x03000000) |
+                                     (result->Ssp0Before & 0x03000000));
+            }
             current = READ_REGISTER_ULONG((PULONG)(dsp + 0x11004));
-            WRITE_REGISTER_ULONG((PULONG)(dsp + 0x11004),
-                                 (current & ~0x03000000) |
-                                 (result->Ssp1Before & 0x03000000));
+            if (current == 0xffffffff) {
+                sspUnavailableMask |= 2;
+            } else {
+                WRITE_REGISTER_ULONG((PULONG)(dsp + 0x11004),
+                                     (current & ~0x03000000) |
+                                     (result->Ssp1Before & 0x03000000));
+            }
             current = READ_REGISTER_ULONG((PULONG)(dsp + 0x12004));
-            WRITE_REGISTER_ULONG((PULONG)(dsp + 0x12004),
-                                 (current & ~0x03000000) |
-                                 (result->Ssp2Before & 0x03000000));
+            if (current == 0xffffffff) {
+                sspUnavailableMask |= 4;
+            } else {
+                WRITE_REGISTER_ULONG((PULONG)(dsp + 0x12004),
+                                     (current & ~0x03000000) |
+                                     (result->Ssp2Before & 0x03000000));
+            }
             result->Ssp0After = READ_REGISTER_ULONG((PULONG)(dsp + 0x10004));
             result->Ssp1After = READ_REGISTER_ULONG((PULONG)(dsp + 0x11004));
             result->Ssp2After = READ_REGISTER_ULONG((PULONG)(dsp + 0x12004));
@@ -748,6 +761,7 @@ cleanup:
     result->RestoredHipcidr = READ_REGISTER_ULONG(hipcidr);
     result->RestoredHipcida = READ_REGISTER_ULONG(hipcida);
     if (CaptureIpc3Ready) {
+        readyResult->SspUnavailableMask = sspUnavailableMask;
         readyResult->HipctdrAfterCleanup =
             READ_REGISTER_ULONG((PULONG)(dsp + 0xc0));
         readyResult->HipctdaAfterCleanup =
@@ -767,9 +781,12 @@ cleanup:
         if (dmaResult->SpibValueRestored != dmaResult->SpibValueBefore ||
             dmaResult->SpibControlRestored != dmaResult->SpibControlBefore)
             readyResult->CleanupFlags |= 16;
-        if (((result->Ssp0After ^ result->Ssp0Before) & 0x03000000) != 0 ||
-            ((result->Ssp1After ^ result->Ssp1Before) & 0x03000000) != 0 ||
-            ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0)
+        if (((sspUnavailableMask & 1) == 0 &&
+             ((result->Ssp0After ^ result->Ssp0Before) & 0x03000000) != 0) ||
+            ((sspUnavailableMask & 2) == 0 &&
+             ((result->Ssp1After ^ result->Ssp1Before) & 0x03000000) != 0) ||
+            ((sspUnavailableMask & 4) == 0 &&
+             ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0))
             readyResult->CleanupFlags |= 32;
     }
     if (result->RestoredAdspcs != result->BeforeAdspcs ||
@@ -784,9 +801,12 @@ cleanup:
          (dmaResult->SpibValueRestored != dmaResult->SpibValueBefore ||
           dmaResult->SpibControlRestored != dmaResult->SpibControlBefore)) ||
         (sspTouched &&
-         (((result->Ssp0After ^ result->Ssp0Before) & 0x03000000) != 0 ||
-          ((result->Ssp1After ^ result->Ssp1Before) & 0x03000000) != 0 ||
-          ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0))) {
+         (((sspUnavailableMask & 1) == 0 &&
+           ((result->Ssp0After ^ result->Ssp0Before) & 0x03000000) != 0) ||
+          ((sspUnavailableMask & 2) == 0 &&
+           ((result->Ssp1After ^ result->Ssp1Before) & 0x03000000) != 0) ||
+          ((sspUnavailableMask & 4) == 0 &&
+           ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0)))) {
         result->Result = 8;
     }
     WdfRequestSetInformation(Request, resultBytes);

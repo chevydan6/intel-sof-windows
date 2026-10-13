@@ -49,7 +49,7 @@ public static class SofProbeClient {
     public static uint[] Exchange(string path, uint code, byte[] input) {
         using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U || code == 0x22A01CU || code == 0x22A024U || code == 0x22A028U || code == 0x22A02CU || code == 0x22A030U) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[code == 0x22A030U ? 188 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))];
+            byte[] bytes = new byte[code == 0x22A030U ? 192 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
@@ -105,6 +105,7 @@ if ($TestIpc3Ready) {
         HipctdrAfterCleanup = ('0x{0:X8}' -f $values[44])
         HipctdaAfterCleanup = ('0x{0:X8}' -f $values[45])
         CleanupFlags = ('0x{0:X8}' -f $values[46])
+        SspUnavailableMask = ('0x{0:X8}' -f $values[47])
         OutputStatus = ('0x{0:X2}' -f $values[27])
         SpibControlRestored = ('0x{0:X8}' -f $values[36])
         SpibValueRestored = $values[37]

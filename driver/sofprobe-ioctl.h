@@ -204,4 +204,5 @@ typedef struct _SOFPROBE_IPC3_READY_RESULT {
     ULONG HipctdrAfterCleanup;
     ULONG HipctdaAfterCleanup;
     ULONG CleanupFlags;
+    ULONG SspUnavailableMask;
 } SOFPROBE_IPC3_READY_RESULT, *PSOFPROBE_IPC3_READY_RESULT;
