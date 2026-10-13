@@ -56,7 +56,7 @@ if ($TestDmaAllocation) {
         BdlEntryBytes = $values[7]
     } | Format-List
     if (($values[1] -band 127) -ne 0 -or ($values[3] -band 127) -ne 0 -or
-        $values[5] -ne 128 -or $values[6] -ne 4096 -or $values[7] -ne 16) {
+        $values[5] -ne 128 -or $values[6] -ne 524288 -or $values[7] -ne 16) {
         throw 'Unexpected DMA buffer alignment or descriptor size'
     }
     return

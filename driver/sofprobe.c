@@ -63,7 +63,7 @@ SofProbeTestDmaAllocation(_In_ WDFREQUEST Request,
     status = WdfCommonBufferCreate(Context->DmaEnabler, 128,
                                    WDF_NO_OBJECT_ATTRIBUTES, &bdl);
     if (!NT_SUCCESS(status)) goto finish;
-    status = WdfCommonBufferCreate(Context->DmaEnabler, 4096,
+    status = WdfCommonBufferCreate(Context->DmaEnabler, 524288,
                                    WDF_NO_OBJECT_ATTRIBUTES, &payload);
     if (!NT_SUCCESS(status)) goto finish;
     bdlAddress = WdfCommonBufferGetAlignedLogicalAddress(bdl);
@@ -74,18 +74,21 @@ SofProbeTestDmaAllocation(_In_ WDFREQUEST Request,
         goto finish;
     }
     RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(bdl), 128);
-    RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(payload), 4096);
+    RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(payload), 524288);
     entry = (SOFPROBE_BDL_ENTRY *)WdfCommonBufferGetAlignedVirtualAddress(bdl);
     entry->Address = (ULONGLONG)payloadAddress.QuadPart;
-    entry->Length = 4096;
+    entry->Length = 262144;
     entry->Flags = 0;
+    entry[1].Address = (ULONGLONG)payloadAddress.QuadPart + 262144;
+    entry[1].Length = 262144;
+    entry[1].Flags = 0;
     result->Version = 1;
     result->BdlAddressLow = bdlAddress.LowPart;
     result->BdlAddressHigh = bdlAddress.HighPart;
     result->PayloadAddressLow = payloadAddress.LowPart;
     result->PayloadAddressHigh = payloadAddress.HighPart;
     result->BdlBytes = 128;
-    result->PayloadBytes = 4096;
+    result->PayloadBytes = 524288;
     result->BdlEntryBytes = sizeof(*entry);
     WdfRequestSetInformation(Request, sizeof(*result));
 

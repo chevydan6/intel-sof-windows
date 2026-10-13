@@ -5,7 +5,7 @@ The Windows probe has bound to `8086:54c8`, read the HDA and DSP register map, e
 Linux associates Alder Lake-N with `tgl_chip_info`: four DSP cores, only core 0 host-managed, and IPC3 as the default. Its cold boot path is:
 
 1. Load and validate `sof-adl-n.ri`. For IPC3, skip the extended `XMan` manifest and place only the remaining payload in the code-loader DMA buffer.
-2. Configure an HDA playback stream with a stream tag, format, contiguous buffer-descriptor list, and DMA buffers for the firmware payload. Configure the capture stream used for ICCMAX by this platform's Linux path.
+2. Configure an HDA playback stream with a stream tag, format, 128-byte-aligned buffer-descriptor list, and DMA buffers for the firmware payload. The Intel HDA specification requires at least two descriptor entries before the stream can run. Configure the capture stream used for ICCMAX by this platform's Linux path.
 3. Power core 0 and send the ROM-control IPC request, including the code-loader stream tag and purge bit.
 4. Clear core 0 reset and stall, wait for the ROM's IPC acknowledgment, then wait for ROM status at DSP BAR + `0x80000` to report initialization done.
 5. Start the code-loader DMA stream and wait for firmware-entered status. Stop DMA and release boot-only streams on every exit path.
