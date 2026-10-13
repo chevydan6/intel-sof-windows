@@ -25,6 +25,20 @@ During the live YouTube baseline, the old driver reported 39,776 submitted packe
 
 The candidate package was staged as `oem24.inf`, version `20.8.20.781`, with signer thumbprint `62C10291592EC405F1D8ADE1A2790DD4584168F7`. Windows returned installation code 3010. SetupAPI recorded an outstanding-open veto while audio was playing. A subsequent attempt with audio services stopped could not restart the device because Windows marked the operation as pending reboot. Both audio services were restarted afterward.
 
-At this checkpoint, the old version-3 binary is still running even though the PnP package properties name the new INF. A reboot is required; the user has been asked before interrupting their active desktop. Do not report the candidate as active or the echo as fixed until status version 4 fields are present and playback is checked.
+Immediately after staging, the old version-3 binary was still running even though the PnP package properties named the new INF. Status version 4 fields were required to establish that the corrected binary had actually loaded; package properties alone were insufficient.
 
 The new package and scripts are in `C:\Users\dan\sofplay-acx17-test`. The old package/signer remain available for recovery. `rollback-acx17-test.ps1` removes the development audio packages, trust entries through ACX17, the test-signing setting, and the pinned firmware copy, followed by a required reboot; it has not been run.
+
+## After the user's reboot
+
+The user restarted Windows; the reported boot time was `2026-10-14 05:26:21` (Windows local time). The connection returned after a short startup delay. Status version 4 fields confirmed the corrected binary was active, with startup count 1, stage 6, success status, and hardware ready. An initial stream had submitted 333 packets with zero late submissions.
+
+Two additional three-second WAVs ran in the signed-in desktop (session 1) at `05:27:29`–`05:27:42`. The task and test exited successfully. Results were:
+
+| Check | Runs | Submitted | Completion notifications | PCM resets | Late packets | Maximum sampled advance |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before explicit tests | 1 | 333 | 332 | 0 | 0 | 4,608 bytes |
+| After WAV 1 | 2 | 641 | 639 | 1 | 0 | 6,144 bytes |
+| After WAV 2 | 3 | 944 | 941 | 2 | 0 | 6,528 bytes |
+
+Packet size was 3,840 bytes. Each stream started at hardware position zero. No callback failure was recorded, and hardware status stayed `0x20`. Late-packet and maximum-advance counters reset when preparing each stream; the latter includes the initial firmware-start handshake before periodic polling. These results establish automatic startup and repeated packet transport with the corrected driver. They do not establish that music/speech sounds correct; the user was asked to retry YouTube and report whether the echo remains.
