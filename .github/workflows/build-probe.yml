@@ -1,4 +1,4 @@
-name: Build read-only PCI probe
+name: Build N100 SOF development probe
 
 on:
   push:
