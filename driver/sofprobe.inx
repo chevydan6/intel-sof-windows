@@ -1,0 +1,54 @@
+; SPDX-License-Identifier: GPL-2.0-only
+; Development-only, read-only PCI resource probe for the N100 target.
+
+[Version]
+Signature="$Windows NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderName%
+DriverVer=10/13/2026,0.1.0.0
+CatalogFile=sofprobe.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[SourceDisksNames]
+1=%DiskName%,,,""
+
+[SourceDisksFiles]
+sofprobe.sys=1,,
+
+[Manufacturer]
+%ProviderName%=Models,NTamd64
+
+[Models.NTamd64]
+%DeviceName%=Install,PCI\VEN_8086&DEV_54C8&SUBSYS_00000000
+
+[Install.NT]
+CopyFiles=DriverFiles
+
+[DriverFiles]
+sofprobe.sys
+
+[Install.NT.Services]
+AddService=sofprobe,0x00000002,Service
+
+[Service]
+DisplayName=%ServiceName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\sofprobe.sys
+
+[Install.NT.Wdf]
+KmdfService=sofprobe,WdfSection
+
+[WdfSection]
+KmdfLibraryVersion=$KMDFVERSION$
+
+[Strings]
+ProviderName="Open SOF Windows Project"
+DeviceName="SOF Alder Lake-N PCI resource probe (development)"
+ServiceName="SOF PCI resource probe"
+DiskName="SOF probe development package"

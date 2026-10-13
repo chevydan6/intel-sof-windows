@@ -1,0 +1,38 @@
+{
+  "collected_at": "2026-10-13T17:10:14.0664201+09:00",
+  "cpu": "Intel(R) N100",
+  "windows_version": "10.0.26300.0",
+  "devices": [
+    {
+      "instance_id": "PCI\\VEN_8086&DEV_54C8&SUBSYS_00000000&REV_00\\3&11583659&0&FB",
+      "friendly_name": "Multimedia Audio Controller",
+      "status": "Error",
+      "problem_code": 28,
+      "hardware_ids": [
+        "PCI\\VEN_8086&DEV_54C8&SUBSYS_00000000&REV_00",
+        "PCI\\VEN_8086&DEV_54C8&SUBSYS_00000000",
+        "PCI\\VEN_8086&DEV_54C8&REV_00",
+        "PCI\\VEN_8086&DEV_54C8",
+        "PCI\\VEN_8086&DEV_54C8&CC_040100",
+        "PCI\\VEN_8086&DEV_54C8&CC_0401"
+      ],
+      "location_paths": [
+        "PCIROOT(0)#PCI(1F03)",
+        "ACPI(_SB_)#ACPI(PCI0)#ACPI(HDAS)"
+      ]
+    },
+    {
+      "instance_id": "ACPI\\10EC5682\\0",
+      "friendly_name": null,
+      "status": "Error",
+      "problem_code": 28,
+      "hardware_ids": [
+        "ACPI\\VEN_10EC&DEV_5682",
+        "ACPI\\10EC5682",
+        "*10EC5682"
+      ],
+      "location_paths": "ACPI(_SB_)#ACPI(PCI0)#ACPI(I2C3)#ACPI(RT58)"
+    }
+  ],
+  "wdk_include_present": false
+}

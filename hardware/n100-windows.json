@@ -1,0 +1,28 @@
+{
+  "collected_on": "2026-10-13",
+  "machine": {
+    "cpu": "Intel(R) N100",
+    "windows_version": "10.0.26300.9550",
+    "connection": "read-only SSH diagnostics"
+  },
+  "devices": [
+    {
+      "role": "Intel Alder Lake-N audio controller",
+      "instance_id": "PCI\\VEN_8086&DEV_54C8&SUBSYS_00000000&REV_00\\3&11583659&0&FB",
+      "location": "PCIROOT(0)#PCI(1F03)",
+      "status": "Error",
+      "problem_code": 28
+    },
+    {
+      "role": "Realtek RT5682 I2C codec",
+      "instance_id": "ACPI\\10EC5682\\0",
+      "location": "ACPI(_SB_)#ACPI(PCI0)#ACPI(I2C3)#ACPI(RT58)",
+      "status": "Error",
+      "problem_code": 28
+    }
+  ],
+  "build_environment": {
+    "wdk_found_on_target": false,
+    "msbuild_found_on_path": false
+  }
+}
