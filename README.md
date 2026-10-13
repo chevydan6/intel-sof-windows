@@ -6,16 +6,16 @@ The first target is an Intel N100 laptop with a PCI audio controller at
 currently contains the verified hardware baseline and diagnostic tooling; it
 does **not** yet contain an installable audio driver.
 
-The read-only PCI probe builds on a Windows 2022 runner with the WDK, and its
-generated INF passes a separate x64 `InfVerif /w` check. It loaded on the N100,
-reported the controller's assigned resources, HDA capabilities, and powered-off
-DSP status. All test packages were removed and the laptop was
-returned to normal boot settings. See the [PCI resource](docs/n100-probe-test.md),
-[HDA register](docs/n100-register-test.md), and
-[DSP status](docs/n100-dsp-status-test.md) test records. The complete
-[capability chain](docs/n100-capability-chain-test.md) was also captured.
-Audio still does not
-work: the probe does not load firmware or expose audio streams.
+The development probe builds with the WDK in Windows CI and its generated INF
+passes a separate x64 `InfVerif /w` check. It read the controller's resources,
+[capability chain](docs/n100-capability-chain-test.md), and
+[DSP status](docs/n100-dsp-status-test.md). Its
+[on-demand snapshot](docs/n100-live-snapshot-test.md) works through a device
+interface. A guarded, opt-in [core-0 power test](docs/n100-core0-power-test.md)
+received hardware acknowledgment and restored the powered-off baseline. All
+test packages were removed, and normal boot settings were verified after each
+test. The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, but
+audio still does not work: the driver does not load firmware or expose streams.
 
 ## Why a host driver is needed
 
@@ -35,8 +35,8 @@ See [hardware/n100-windows.json](hardware/n100-windows.json) and
 
 ## Development order
 
-1. Build a read-only KMDF PCI probe that binds only to `8086:54c8`, reports
-   BARs, interrupt resources, and controller capabilities, then unloads cleanly.
+1. Build a KMDF PCI probe that binds only to `8086:54c8`, reports
+   controller capabilities, verifies a guarded DSP power request, and unloads cleanly. **Done.**
 2. Add DSP boot and firmware-ready handshake using the Alder Lake-N Linux SOF
    code as the hardware reference. Keep a known-good Windows restore path.
 3. Add IPC3 request/reply handling, timeouts, and firmware trace collection.

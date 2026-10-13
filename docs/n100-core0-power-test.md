@@ -15,4 +15,4 @@ The driver reported `UpPolls=1`, `DownPolls=0`, and `Result=0`. A second pulse i
 
 The sequence follows the core-0 host-managed mask and ADSPCS field definitions in the [Linux SOF Tiger Lake/Alder Lake description](https://github.com/torvalds/linux/blob/master/sound/soc/sof/intel/tgl.c), [Intel HDA/SOF register definitions](https://github.com/torvalds/linux/blob/master/sound/soc/sof/intel/hda.h), and [core power sequencing](https://github.com/torvalds/linux/blob/master/sound/soc/sof/intel/hda-dsp.c). The Windows test intentionally left reset and stall asserted and did not load firmware or enable interrupts.
 
-After the test, the driver package, diagnostic values, transient certificate trust, and test-signing BCD value were removed. Final reboot verification is pending.
+After the test, the driver package, diagnostic values, transient certificate trust, and test-signing BCD value were removed. After the 18:26:00 reboot, the rollback script verified the controller was stopped with no driver bound, no probe package or service, no diagnostic values, no certificate trust, and test signing disabled.
