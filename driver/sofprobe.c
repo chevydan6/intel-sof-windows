@@ -53,6 +53,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
 #ifdef SOFPLAY_INTEGRATED
     ACXCIRCUIT RenderCircuit;
     BOOLEAN RenderCircuitAdded;
+    volatile LONG AcxStreamClaimed;
 #endif
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 
@@ -72,6 +73,147 @@ C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
 #define SOFPROBE_TONE_BYTES 49152UL
 #define SOFPROBE_TONE_PERIOD_BYTES 12288UL
 #define SOFPROBE_TONE_PAGES 12UL
+
+#ifdef SOFPLAY_INTEGRATED
+NTSTATUS
+SofProbeAcxClaimStream(_In_ WDFDEVICE Device)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    return InterlockedCompareExchange(&context->AcxStreamClaimed, 1, 0) == 0
+           ? STATUS_SUCCESS : STATUS_DEVICE_BUSY;
+}
+
+VOID
+SofProbeAcxReleaseStream(_In_ WDFDEVICE Device)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    InterlockedExchange(&context->AcxStreamClaimed, 0);
+}
+
+NTSTATUS
+SofProbeAcxGetAudioRing(_In_ WDFDEVICE Device,
+                        _Out_ PUCHAR *Buffer,
+                        _Out_ PULONG Bytes)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    PHYSICAL_ADDRESS address;
+    ULONG offset;
+    if (!context->SessionActive || !context->TonePrepared ||
+        !context->TonePcmConfigured || context->ToneAudio == NULL) {
+        return STATUS_DEVICE_NOT_READY;
+    }
+    address = WdfCommonBufferGetAlignedLogicalAddress(context->ToneAudio);
+    offset = (ULONG)((((ULONGLONG)address.QuadPart + PAGE_SIZE - 1) &
+                      ~((ULONGLONG)PAGE_SIZE - 1)) -
+                     (ULONGLONG)address.QuadPart);
+    *Buffer = (PUCHAR)WdfCommonBufferGetAlignedVirtualAddress(
+        context->ToneAudio) + offset;
+    *Bytes = SOFPROBE_TONE_BYTES;
+    RtlZeroMemory(*Buffer, *Bytes);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofProbeAcxGetPosition(_In_ WDFDEVICE Device,
+                       _Out_ PULONG Position,
+                       _Out_ PUCHAR Status)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    if (!context->TonePrepared || context->ToneHda == NULL)
+        return STATUS_DEVICE_NOT_READY;
+    *Position = READ_REGISTER_ULONG((PULONG)(context->ToneHda + 0x164));
+    *Status = READ_REGISTER_UCHAR(context->ToneHda + 0x163);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+SofProbeAcxTrigger(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                   _In_ ULONG Command)
+{
+    PUCHAR dsp = Context->SessionDsp;
+    ULONG i;
+    LARGE_INTEGER delay;
+    if (dsp == NULL || READ_REGISTER_ULONG((PULONG)(dsp + 0xd0)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(dsp + 0xd4)) != 0)
+        return STATUS_DEVICE_BUSY;
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0000), 12);
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0004), Command);
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0008), 0);
+    KeMemoryBarrier();
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0xd0), 0x80000000);
+    delay.QuadPart = -10000;
+    for (i = 0; i < 500; ++i) {
+        if (READ_REGISTER_ULONG((PULONG)(dsp + 0xd4)) & 0x80000000)
+            break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    if (i == 500) return STATUS_IO_TIMEOUT;
+    if (READ_REGISTER_ULONG((PULONG)(dsp + 0xa0000)) != 12 ||
+        READ_REGISTER_ULONG((PULONG)(dsp + 0xa0008)) != 0) {
+        WRITE_REGISTER_ULONG((PULONG)(dsp + 0xd4), 0x80000000);
+        return STATUS_DEVICE_DATA_ERROR;
+    }
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0xd4), 0x80000000);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofProbeAcxStart(_In_ WDFDEVICE Device)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    ULONG i;
+    LARGE_INTEGER delay;
+    NTSTATUS status;
+    if (!context->SessionActive || !context->TonePrepared ||
+        !context->TonePcmConfigured || context->ToneDmaRunning ||
+        context->ToneTriggerActive || context->ToneHda == NULL)
+        return STATUS_DEVICE_NOT_READY;
+    WRITE_REGISTER_UCHAR(context->ToneHda + 0x163, 0x1c);
+    WRITE_REGISTER_ULONG((PULONG)(context->ToneHda + 0x160), 0x00140002);
+    delay.QuadPart = -10000;
+    for (i = 0; i < 50; ++i) {
+        if (READ_REGISTER_ULONG((PULONG)(context->ToneHda + 0x160)) & 2)
+            break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    if (i == 50) return STATUS_IO_TIMEOUT;
+    context->ToneDmaRunning = TRUE;
+    status = SofProbeAcxTrigger(context, 0x60040000);
+    if (NT_SUCCESS(status)) {
+        context->ToneTriggerActive = TRUE;
+    } else {
+        WRITE_REGISTER_UCHAR(context->ToneHda + 0x160, 0);
+        context->ToneDmaRunning = FALSE;
+    }
+    return status;
+}
+
+NTSTATUS
+SofProbeAcxPause(_In_ WDFDEVICE Device)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    ULONG i;
+    LARGE_INTEGER delay;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (!context->TonePrepared || context->ToneHda == NULL)
+        return STATUS_DEVICE_NOT_READY;
+    if (context->ToneTriggerActive) {
+        status = SofProbeAcxTrigger(context, 0x60050000);
+        if (NT_SUCCESS(status)) context->ToneTriggerActive = FALSE;
+    }
+    WRITE_REGISTER_UCHAR(context->ToneHda + 0x160, 0);
+    delay.QuadPart = -10000;
+    for (i = 0; i < 300; ++i) {
+        if ((READ_REGISTER_UCHAR(context->ToneHda + 0x160) & 2) == 0)
+            break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    if (i == 300) return STATUS_IO_TIMEOUT;
+    context->ToneDmaRunning = FALSE;
+    WRITE_REGISTER_UCHAR(context->ToneHda + 0x163, 0x1c);
+    return status;
+}
+#endif
 
 static VOID
 SofProbeTestDmaAllocation(_In_ WDFREQUEST Request,

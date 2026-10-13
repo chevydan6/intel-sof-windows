@@ -20,6 +20,50 @@ EVT_WDF_DEVICE_RELEASE_HARDWARE SofPlayEvtReleaseHardware;
 #endif
 EVT_ACX_CIRCUIT_CREATE_STREAM SofPlayEvtCreateStream;
 
+#ifdef SOFPLAY_INTEGRATED
+NTSTATUS SofProbeAcxClaimStream(_In_ WDFDEVICE Device);
+VOID SofProbeAcxReleaseStream(_In_ WDFDEVICE Device);
+NTSTATUS SofProbeAcxGetAudioRing(_In_ WDFDEVICE Device,
+                                _Out_ PUCHAR *Buffer,
+                                _Out_ PULONG Bytes);
+NTSTATUS SofProbeAcxGetPosition(_In_ WDFDEVICE Device,
+                               _Out_ PULONG Position,
+                               _Out_ PUCHAR Status);
+NTSTATUS SofProbeAcxStart(_In_ WDFDEVICE Device);
+NTSTATUS SofProbeAcxPause(_In_ WDFDEVICE Device);
+
+EVT_ACX_STREAM_PREPARE_HARDWARE SofPlayEvtStreamPrepare;
+EVT_ACX_STREAM_RELEASE_HARDWARE SofPlayEvtStreamRelease;
+EVT_ACX_STREAM_RUN SofPlayEvtStreamRun;
+EVT_ACX_STREAM_PAUSE SofPlayEvtStreamPause;
+EVT_ACX_STREAM_GET_HW_LATENCY SofPlayEvtGetLatency;
+EVT_ACX_STREAM_ALLOCATE_RTPACKETS SofPlayEvtAllocatePackets;
+EVT_ACX_STREAM_FREE_RTPACKETS SofPlayEvtFreePackets;
+EVT_ACX_STREAM_SET_RENDER_PACKET SofPlayEvtSetPacket;
+EVT_ACX_STREAM_GET_CURRENT_PACKET SofPlayEvtGetPacket;
+EVT_ACX_STREAM_GET_PRESENTATION_POSITION SofPlayEvtGetPosition;
+EVT_WDF_TIMER SofPlayEvtTimer;
+EVT_WDF_OBJECT_CONTEXT_CLEANUP SofPlayEvtStreamCleanup;
+
+typedef struct _SOFPLAY_STREAM_CONTEXT {
+    WDFDEVICE Device;
+    ACXSTREAM Stream;
+    WDFTIMER Timer;
+    PACX_RTPACKET Packets;
+    ULONG PacketCount;
+    ULONG PacketSize;
+    PUCHAR Ring;
+    ULONG RingBytes;
+    ULONG LastPosition;
+    ULONGLONG LinearPosition;
+    ULONG NextComplete;
+    BOOLEAN Running;
+} SOFPLAY_STREAM_CONTEXT, *PSOFPLAY_STREAM_CONTEXT;
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPLAY_STREAM_CONTEXT,
+                                   SofPlayGetStreamContext)
+#define SOFPLAY_PACKET_TAG 'pFoS'
+#endif
+
 #ifndef SOFPLAY_INTEGRATED
 typedef struct _SOFPLAY_DEVICE_CONTEXT {
     ACXCIRCUIT RenderCircuit;
@@ -133,6 +177,65 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
                        _In_ const GUID *SignalProcessingMode,
                        _In_ ACXOBJECTBAG VarArguments)
 {
+#ifdef SOFPLAY_INTEGRATED
+    ACX_STREAM_CALLBACKS streamCallbacks;
+    ACX_RT_STREAM_CALLBACKS rtCallbacks;
+    WDF_OBJECT_ATTRIBUTES attributes;
+    WDF_TIMER_CONFIG timerConfig;
+    ACXSTREAM stream;
+    PSOFPLAY_STREAM_CONTEXT context;
+    NTSTATUS status;
+
+    UNREFERENCED_PARAMETER(Pin);
+    UNREFERENCED_PARAMETER(SignalProcessingMode);
+    UNREFERENCED_PARAMETER(VarArguments);
+    if (AcxDataFormatGetSampleRate(StreamFormat) != 48000 ||
+        AcxDataFormatGetChannelsCount(StreamFormat) != 2 ||
+        AcxDataFormatGetBlockAlign(StreamFormat) != 8)
+        return STATUS_NOT_SUPPORTED;
+    status = SofProbeAcxClaimStream(Device);
+    if (!NT_SUCCESS(status)) return status;
+    ACX_STREAM_CALLBACKS_INIT(&streamCallbacks);
+    streamCallbacks.EvtAcxStreamPrepareHardware = SofPlayEvtStreamPrepare;
+    streamCallbacks.EvtAcxStreamReleaseHardware = SofPlayEvtStreamRelease;
+    streamCallbacks.EvtAcxStreamRun = SofPlayEvtStreamRun;
+    streamCallbacks.EvtAcxStreamPause = SofPlayEvtStreamPause;
+    status = AcxStreamInitAssignAcxStreamCallbacks(StreamInit,
+                                                   &streamCallbacks);
+    if (!NT_SUCCESS(status)) goto fail;
+    ACX_RT_STREAM_CALLBACKS_INIT(&rtCallbacks);
+    rtCallbacks.EvtAcxStreamGetHwLatency = SofPlayEvtGetLatency;
+    rtCallbacks.EvtAcxStreamAllocateRtPackets = SofPlayEvtAllocatePackets;
+    rtCallbacks.EvtAcxStreamFreeRtPackets = SofPlayEvtFreePackets;
+    rtCallbacks.EvtAcxStreamSetRenderPacket = SofPlayEvtSetPacket;
+    rtCallbacks.EvtAcxStreamGetCurrentPacket = SofPlayEvtGetPacket;
+    rtCallbacks.EvtAcxStreamGetPresentationPosition = SofPlayEvtGetPosition;
+    status = AcxStreamInitAssignAcxRtStreamCallbacks(StreamInit,
+                                                     &rtCallbacks);
+    if (!NT_SUCCESS(status)) goto fail;
+    AcxStreamInitSetAcxRtStreamSupportsNotifications(StreamInit);
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes,
+                                            SOFPLAY_STREAM_CONTEXT);
+    attributes.EvtCleanupCallback = SofPlayEvtStreamCleanup;
+    status = AcxRtStreamCreate(Device, Circuit, &attributes, &StreamInit,
+                               &stream);
+    if (!NT_SUCCESS(status)) goto fail;
+    context = SofPlayGetStreamContext(stream);
+    context->Device = Device;
+    context->Stream = stream;
+    WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, SofPlayEvtTimer, 1);
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = stream;
+    status = WdfTimerCreate(&timerConfig, &attributes, &context->Timer);
+    if (!NT_SUCCESS(status)) {
+        WdfObjectDelete(stream);
+        return status;
+    }
+    return STATUS_SUCCESS;
+fail:
+    SofProbeAcxReleaseStream(Device);
+    return status;
+#else
     UNREFERENCED_PARAMETER(Device);
     UNREFERENCED_PARAMETER(Circuit);
     UNREFERENCED_PARAMETER(Pin);
@@ -142,7 +245,241 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     UNREFERENCED_PARAMETER(VarArguments);
     // Hardware stream creation is added after circuit enumeration is verified.
     return STATUS_NOT_SUPPORTED;
+#endif
 }
+
+#ifdef SOFPLAY_INTEGRATED
+VOID
+SofPlayEvtStreamCleanup(_In_ WDFOBJECT Object)
+{
+    PSOFPLAY_STREAM_CONTEXT context =
+        SofPlayGetStreamContext((ACXSTREAM)Object);
+    if (context->Packets != NULL) {
+        ULONG i;
+        for (i = 0; i < context->PacketCount; ++i) {
+            PMDL mdl = context->Packets[i].RtPacketBuffer.u.MdlType.Mdl;
+            if (mdl != NULL) {
+                PVOID buffer = MmGetMdlVirtualAddress(mdl);
+                IoFreeMdl(mdl);
+                ExFreePoolWithTag(buffer, SOFPLAY_PACKET_TAG);
+            }
+        }
+        ExFreePoolWithTag(context->Packets, SOFPLAY_PACKET_TAG);
+    }
+    if (context->Device != NULL) SofProbeAcxReleaseStream(context->Device);
+}
+
+NTSTATUS
+SofPlayEvtAllocatePackets(_In_ ACXSTREAM Stream,
+                          _In_ ULONG PacketCount,
+                          _In_ ULONG PacketSize,
+                          _Out_ PACX_RTPACKET *Packets)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    PACX_RTPACKET packets;
+    ULONG allocationBytes;
+    ULONG i;
+    if (PacketCount < 2 || PacketCount > 16 || PacketSize == 0 ||
+        PacketSize > 12288 || (PacketSize & 7) != 0 ||
+        PacketCount * PacketSize > 49152 || context->Packets != NULL)
+        return STATUS_INVALID_PARAMETER;
+    allocationBytes = (PacketSize + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    packets = (PACX_RTPACKET)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+        sizeof(ACX_RTPACKET) * PacketCount, SOFPLAY_PACKET_TAG);
+    if (packets == NULL) return STATUS_INSUFFICIENT_RESOURCES;
+    RtlZeroMemory(packets, sizeof(ACX_RTPACKET) * PacketCount);
+    context->Packets = packets;
+    context->PacketCount = PacketCount;
+    context->PacketSize = PacketSize;
+    for (i = 0; i < PacketCount; ++i) {
+        PVOID buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                       allocationBytes, SOFPLAY_PACKET_TAG);
+        PMDL mdl;
+        if (buffer == NULL) return STATUS_INSUFFICIENT_RESOURCES;
+        mdl = IoAllocateMdl(buffer, allocationBytes, FALSE, TRUE, NULL);
+        if (mdl == NULL) {
+            ExFreePoolWithTag(buffer, SOFPLAY_PACKET_TAG);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        MmBuildMdlForNonPagedPool(mdl);
+        ACX_RTPACKET_INIT(&packets[i]);
+        WDF_MEMORY_DESCRIPTOR_INIT_MDL(&packets[i].RtPacketBuffer,
+                                       mdl, allocationBytes);
+        packets[i].RtPacketSize = PacketSize;
+        packets[i].RtPacketOffset = 0;
+    }
+    *Packets = packets;
+    return STATUS_SUCCESS;
+}
+
+VOID
+SofPlayEvtFreePackets(_In_ ACXSTREAM Stream,
+                       _In_ PACX_RTPACKET Packets,
+                       _In_ ULONG PacketCount)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    ULONG i;
+    if (Packets != context->Packets || PacketCount != context->PacketCount)
+        return;
+    for (i = 0; i < PacketCount; ++i) {
+        PMDL mdl = Packets[i].RtPacketBuffer.u.MdlType.Mdl;
+        if (mdl != NULL) {
+            PVOID buffer = MmGetMdlVirtualAddress(mdl);
+            IoFreeMdl(mdl);
+            ExFreePoolWithTag(buffer, SOFPLAY_PACKET_TAG);
+        }
+    }
+    ExFreePoolWithTag(Packets, SOFPLAY_PACKET_TAG);
+    context->Packets = NULL;
+    context->PacketCount = 0;
+    context->PacketSize = 0;
+}
+
+NTSTATUS
+SofPlayEvtStreamPrepare(_In_ ACXSTREAM Stream)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    NTSTATUS status = SofProbeAcxGetAudioRing(context->Device,
+                                              &context->Ring,
+                                              &context->RingBytes);
+    if (NT_SUCCESS(status)) {
+        context->LastPosition = 0;
+        context->LinearPosition = 0;
+        context->NextComplete = 0;
+    }
+    return status;
+}
+
+NTSTATUS
+SofPlayEvtStreamRelease(_In_ ACXSTREAM Stream)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    if (context->Running) {
+        WdfTimerStop(context->Timer, TRUE);
+        (VOID)SofProbeAcxPause(context->Device);
+        context->Running = FALSE;
+    }
+    context->Ring = NULL;
+    context->RingBytes = 0;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofPlayEvtStreamRun(_In_ ACXSTREAM Stream)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    NTSTATUS status;
+    ULONG position;
+    UCHAR streamStatus;
+    if (context->Ring == NULL || context->Packets == NULL)
+        return STATUS_DEVICE_NOT_READY;
+    status = SofProbeAcxStart(context->Device);
+    if (!NT_SUCCESS(status)) return status;
+    status = SofProbeAcxGetPosition(context->Device, &position,
+                                    &streamStatus);
+    if (!NT_SUCCESS(status)) {
+        (VOID)SofProbeAcxPause(context->Device);
+        return status;
+    }
+    context->LastPosition = position;
+    context->Running = TRUE;
+    WdfTimerStart(context->Timer, WDF_REL_TIMEOUT_IN_MS(1));
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofPlayEvtStreamPause(_In_ ACXSTREAM Stream)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    if (!context->Running) return STATUS_SUCCESS;
+    WdfTimerStop(context->Timer, TRUE);
+    context->Running = FALSE;
+    return SofProbeAcxPause(context->Device);
+}
+
+NTSTATUS
+SofPlayEvtGetLatency(_In_ ACXSTREAM Stream,
+                      _Out_ ULONG *FifoSize,
+                      _Out_ ULONG *Delay)
+{
+    UNREFERENCED_PARAMETER(Stream);
+    *FifoSize = 128;
+    *Delay = 0;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofPlayEvtSetPacket(_In_ ACXSTREAM Stream, _In_ ULONG Packet,
+                     _In_ ULONG Flags, _In_ ULONG EosPacketLength)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    ULONG offset;
+    ULONG first;
+    PUCHAR source;
+    UNREFERENCED_PARAMETER(Flags);
+    UNREFERENCED_PARAMETER(EosPacketLength);
+    if (context->Packets == NULL || context->Ring == NULL ||
+        context->RingBytes == 0)
+        return STATUS_DEVICE_NOT_READY;
+    source = (PUCHAR)MmGetMdlVirtualAddress(
+        context->Packets[Packet % context->PacketCount]
+            .RtPacketBuffer.u.MdlType.Mdl);
+    source += context->Packets[Packet % context->PacketCount].RtPacketOffset;
+    offset = (ULONG)(((ULONGLONG)Packet * context->PacketSize) %
+                     context->RingBytes);
+    first = min(context->PacketSize, context->RingBytes - offset);
+    RtlCopyMemory(context->Ring + offset, source, first);
+    if (first < context->PacketSize)
+        RtlCopyMemory(context->Ring, source + first,
+                      context->PacketSize - first);
+    KeMemoryBarrier();
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofPlayEvtGetPacket(_In_ ACXSTREAM Stream, _Out_ PULONG CurrentPacket)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    *CurrentPacket = context->NextComplete;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofPlayEvtGetPosition(_In_ ACXSTREAM Stream,
+                       _Out_ PULONGLONG PositionInBlocks,
+                       _Out_ PULONGLONG QPCPosition)
+{
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
+    *PositionInBlocks = context->LinearPosition / 8;
+    *QPCPosition = (ULONGLONG)KeQueryPerformanceCounter(NULL).QuadPart;
+    return STATUS_SUCCESS;
+}
+
+VOID
+SofPlayEvtTimer(_In_ WDFTIMER Timer)
+{
+    ACXSTREAM stream = (ACXSTREAM)WdfTimerGetParentObject(Timer);
+    PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(stream);
+    ULONG position;
+    UCHAR status;
+    if (!context->Running || context->PacketSize == 0 ||
+        !NT_SUCCESS(SofProbeAcxGetPosition(context->Device, &position,
+                                            &status)) ||
+        (status & 0x1c) != 0 || position >= context->RingBytes)
+        return;
+    context->LinearPosition +=
+        (position + context->RingBytes - context->LastPosition) %
+        context->RingBytes;
+    context->LastPosition = position;
+    while (context->LinearPosition >=
+           ((ULONGLONG)context->NextComplete + 1) * context->PacketSize) {
+        ULONGLONG qpc = (ULONGLONG)KeQueryPerformanceCounter(NULL).QuadPart;
+        (VOID)AcxRtStreamNotifyPacketComplete(stream,
+                                               context->NextComplete, qpc);
+        ++context->NextComplete;
+    }
+}
+#endif
 
 #ifndef SOFPLAY_INTEGRATED
 NTSTATUS
