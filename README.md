@@ -14,7 +14,7 @@ passes a separate x64 `InfVerif /w` check. It read the controller's resources,
 interface. A guarded, opt-in [core-0 power test](docs/n100-core0-power-test.md)
 received hardware acknowledgment and restored the powered-off baseline. All
 test packages were removed, and normal boot settings were verified after each
-test. The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, the [IPC3 firmware payload can be staged in DMA memory](docs/n100-ipc3-staging-test.md), the [code-loader](docs/n100-stream-setup-test.md) and [ICCMAX capture](docs/n100-capture-setup-test.md) streams both accepted guarded setup and restoration, the [capture RUN/STOP test](docs/n100-capture-dma-test.md) returned cleanly, the [DSP ROM acknowledged entry](docs/n100-rom-entry-test.md), the [firmware reached its entered state](docs/n100-firmware-dma-test.md), the [IPC3 firmware-ready notification arrived](docs/n100-ipc3-ready-test.md), and a [host IPC3 request received a valid reply](docs/n100-ipc3-transaction-test.md). Audio still does not work: the probe powers the DSP down after each bounded test and does not maintain an IPC3 session or expose streams.
+test. The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, the [IPC3 firmware payload can be staged in DMA memory](docs/n100-ipc3-staging-test.md), the [code-loader](docs/n100-stream-setup-test.md) and [ICCMAX capture](docs/n100-capture-setup-test.md) streams both accepted guarded setup and restoration, the [capture RUN/STOP test](docs/n100-capture-dma-test.md) returned cleanly, the [DSP ROM acknowledged entry](docs/n100-rom-entry-test.md), the [firmware reached its entered state](docs/n100-firmware-dma-test.md), the [IPC3 firmware-ready notification arrived](docs/n100-ipc3-ready-test.md), a [host IPC3 request received a valid reply](docs/n100-ipc3-transaction-test.md), and a [managed DSP session handled a second request](docs/n100-ipc3-session-test.md). Audio still does not work: the probe has no interrupt-driven IPC service, topology, or Windows audio streams.
 
 ## Why a host driver is needed
 
@@ -38,7 +38,7 @@ See [hardware/n100-windows.json](hardware/n100-windows.json) and
    controller capabilities, verifies a guarded DSP power request, and unloads cleanly. **Done.**
 2. Add DSP boot and firmware-ready handshake using the Alder Lake-N Linux SOF
    code as the hardware reference. Keep a known-good Windows restore path.
-   **Bounded hardware probe done; persistent boot remains.**
+   **Guarded session start, request, and stop verified on N100.**
 3. Add IPC3 request/reply handling, timeouts, and firmware trace collection.
 4. Bring up one simple playback path, then capture and codec controls through
    Windows ACX audio circuits.

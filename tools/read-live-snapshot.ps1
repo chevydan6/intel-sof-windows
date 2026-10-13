@@ -109,7 +109,7 @@ if ($StartSession) {
         BootResult = $values[22]
     } | Format-List
     if ($values[22] -ne 0 -or $values[179] -ne 1 -or
-        $values[80] -ne 0xd0010000 -or $values[81] -ne 0) {
+        $values[80] -ne [uint32]3489726464 -or $values[81] -ne 0) {
         throw 'Managed IPC3 session did not start'
     }
     return
@@ -123,9 +123,9 @@ if ($SessionMemory) {
         ReplyPolls = $values[5]
         Result = $values[6]
     } | Format-List
-    if ($values[6] -ne 0 -or $values[3] -ne 0xd0010000 -or
+    if ($values[6] -ne 0 -or $values[3] -ne [uint32]3489726464 -or
         $values[4] -ne 0 -or $values[2] -lt 12 -or
-        ($values[1] -band 0x80000000) -eq 0) {
+        ($values[1] -band [uint32]2147483648) -eq 0) {
         throw 'Managed IPC3 request/reply failed'
     }
     return
