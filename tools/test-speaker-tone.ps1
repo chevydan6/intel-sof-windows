@@ -40,7 +40,7 @@ try {
     $msg[2]=4; $msg[3]=2; $msg[4]=1; $msg[7]=36
     $msg[10]=2; $msg[12]=2; $msg[17]=1; $msg[18]=1
     Send-Ipc 'SSP1 DAI component' $msg
-    $msg = New-Words 112 0x80010000
+    $msg = New-Words 112 ([Convert]::ToUInt32('80010000',16))
     $msg[2]=1; $msg[3]=1; $msg[4]=0x4001
     $msg[13]=60; $msg[15]=24000000; $msg[16]=48000
     $msg[17]=3072000; $msg[18]=2; $msg[19]=3; $msg[20]=3
