@@ -4,6 +4,11 @@
 
 #include <ntddk.h>
 #include <wdf.h>
+#ifdef SOFPLAY_INTEGRATED
+#include <acx.h>
+NTSTATUS SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
+                                    _Out_ ACXCIRCUIT *Circuit);
+#endif
 #include <initguid.h>
 #include <wdmguid.h>
 #include "sofprobe-ioctl.h"
@@ -45,6 +50,10 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN ToneDmaRunning;
     BOOLEAN TonePcmConfigured;
     BOOLEAN ToneTriggerActive;
+#ifdef SOFPLAY_INTEGRATED
+    ACXCIRCUIT RenderCircuit;
+    BOOLEAN RenderCircuitAdded;
+#endif
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPROBE_DEVICE_CONTEXT, SofProbeGetContext)
@@ -2388,10 +2397,23 @@ DriverEntry(
     )
 {
     WDF_DRIVER_CONFIG config;
+#ifdef SOFPLAY_INTEGRATED
+    ACX_DRIVER_CONFIG acxConfig;
+    WDFDRIVER driver;
+    NTSTATUS status;
+#endif
 
     WDF_DRIVER_CONFIG_INIT(&config, SofProbeEvtDeviceAdd);
+#ifdef SOFPLAY_INTEGRATED
+    status = WdfDriverCreate(DriverObject, RegistryPath,
+                             WDF_NO_OBJECT_ATTRIBUTES, &config, &driver);
+    if (!NT_SUCCESS(status)) return status;
+    ACX_DRIVER_CONFIG_INIT(&acxConfig);
+    return AcxDriverInitialize(driver, &acxConfig);
+#else
     return WdfDriverCreate(DriverObject, RegistryPath,
                            WDF_NO_OBJECT_ATTRIBUTES, &config, WDF_NO_HANDLE);
+#endif
 }
 
 NTSTATUS
@@ -2407,8 +2429,17 @@ SofProbeEvtDeviceAdd(
     WDFDEVICE device;
     PSOFPROBE_DEVICE_CONTEXT context;
     NTSTATUS status;
+#ifdef SOFPLAY_INTEGRATED
+    ACX_DEVICEINIT_CONFIG acxInit;
+    ACX_DEVICE_CONFIG acxConfig;
+#endif
 
     UNREFERENCED_PARAMETER(Driver);
+#ifdef SOFPLAY_INTEGRATED
+    ACX_DEVICEINIT_CONFIG_INIT(&acxInit);
+    status = AcxDeviceInitInitialize(DeviceInit, &acxInit);
+    if (!NT_SUCCESS(status)) return status;
+#endif
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&callbacks);
     callbacks.EvtDevicePrepareHardware = SofProbeEvtPrepareHardware;
     callbacks.EvtDeviceReleaseHardware = SofProbeEvtReleaseHardware;
@@ -2419,6 +2450,11 @@ SofProbeEvtDeviceAdd(
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
     if (!NT_SUCCESS(status)) return status;
     context = SofProbeGetContext(device);
+#ifdef SOFPLAY_INTEGRATED
+    ACX_DEVICE_CONFIG_INIT(&acxConfig);
+    status = AcxDeviceInitialize(device, &acxConfig);
+    if (!NT_SUCCESS(status)) return status;
+#endif
     WdfDeviceSetAlignmentRequirement(device, FILE_128_BYTE_ALIGNMENT);
     WDF_DMA_ENABLER_CONFIG_INIT(&dmaConfig, WdfDmaProfileScatterGather64Duplex,
                                 524288);
@@ -2435,7 +2471,13 @@ SofProbeEvtDeviceAdd(
     status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES,
                               WDF_NO_HANDLE);
     if (!NT_SUCCESS(status)) return status;
-    return WdfDeviceCreateDeviceInterface(device, &SofProbeInterfaceGuid, NULL);
+    status = WdfDeviceCreateDeviceInterface(device, &SofProbeInterfaceGuid, NULL);
+    if (!NT_SUCCESS(status)) return status;
+#ifdef SOFPLAY_INTEGRATED
+    return SofPlayCreateRenderCircuit(device, &context->RenderCircuit);
+#else
+    return STATUS_SUCCESS;
+#endif
 }
 
 VOID
@@ -2676,6 +2718,14 @@ SofProbeEvtReleaseHardware(
     UNREFERENCED_PARAMETER(ResourcesTranslated);
     {
         PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+#ifdef SOFPLAY_INTEGRATED
+        if (context->RenderCircuitAdded) {
+            NTSTATUS status = AcxDeviceRemoveCircuit(Device,
+                                                    context->RenderCircuit);
+            if (!NT_SUCCESS(status)) return status;
+            context->RenderCircuitAdded = FALSE;
+        }
+#endif
         context->ResourcesReady = FALSE;
         // Hardware access belongs in D0Exit. A surprise removal can make
         // MMIO inaccessible, so release any mapping still held here.
@@ -2775,6 +2825,11 @@ SofProbeEvtPrepareHardware(
             context->HdaStart = hdaMemory->u.Memory.Start;
             context->DspStart = dspMemory->u.Memory.Start;
             context->ResourcesReady = TRUE;
+#ifdef SOFPLAY_INTEGRATED
+            status = AcxDeviceAddCircuit(Device, context->RenderCircuit);
+            if (NT_SUCCESS(status)) context->RenderCircuitAdded = TRUE;
+            else context->ResourcesReady = FALSE;
+#endif
         }
         return status;
     }

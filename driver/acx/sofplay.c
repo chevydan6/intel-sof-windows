@@ -12,17 +12,21 @@
 #include <wdf.h>
 #include <acx.h>
 
+#ifndef SOFPLAY_INTEGRATED
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SofPlayEvtDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE SofPlayEvtPrepareHardware;
 EVT_WDF_DEVICE_RELEASE_HARDWARE SofPlayEvtReleaseHardware;
+#endif
 EVT_ACX_CIRCUIT_CREATE_STREAM SofPlayEvtCreateStream;
 
+#ifndef SOFPLAY_INTEGRATED
 typedef struct _SOFPLAY_DEVICE_CONTEXT {
     ACXCIRCUIT RenderCircuit;
     BOOLEAN CircuitAdded;
 } SOFPLAY_DEVICE_CONTEXT, *PSOFPLAY_DEVICE_CONTEXT;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPLAY_DEVICE_CONTEXT, SofPlayGetContext)
+#endif
 
 static const GUID SofPlaySpeakerComponent =
     { 0x39edc32d, 0xd57e, 0x47a9,
@@ -49,7 +53,7 @@ static KSDATAFORMAT_WAVEFORMATEXTENSIBLE SofPlayPcm48000S32 = {
     }
 };
 
-static NTSTATUS
+NTSTATUS
 SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
                            _Out_ ACXCIRCUIT *Circuit)
 {
@@ -140,6 +144,7 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     return STATUS_NOT_SUPPORTED;
 }
 
+#ifndef SOFPLAY_INTEGRATED
 NTSTATUS
 SofPlayEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit)
 {
@@ -213,3 +218,4 @@ DriverEntry(_In_ PDRIVER_OBJECT DriverObject,
     ACX_DRIVER_CONFIG_INIT(&acxConfig);
     return AcxDriverInitialize(driver, &acxConfig);
 }
+#endif
