@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Read a small fixed set of HDA controller registers. No device register writes,
+// Read a fixed set of HDA and DSP status registers. No device register writes,
 // DMA, firmware, interrupts, or codec access. Values are saved in the device's
 // registry key so the target can be inspected without a kernel debugger.
 
@@ -20,10 +20,12 @@ SofProbeSaveValue(_In_ WDFKEY Key, _In_ PCWSTR Name, _In_ ULONG Value)
 }
 
 static NTSTATUS
-SofProbeReadHdaRegisters(_In_ WDFDEVICE Device,
-                         _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Memory)
+SofProbeReadRegisters(_In_ WDFDEVICE Device,
+                      _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR HdaMemory,
+                      _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR DspMemory)
 {
     PUCHAR registers;
+    PUCHAR dspRegisters;
     WDFKEY key;
     NTSTATUS status;
     ULONG gcap;
@@ -33,12 +35,19 @@ SofProbeReadHdaRegisters(_In_ WDFDEVICE Device,
     ULONG statests;
     ULONG gcap2;
     ULONG llch;
+    ULONG capPointer;
+    ULONG capHeader;
+    ULONG adspcs;
+    ULONG adspis;
+    ULONG hipct;
+    ULONG hipci;
 
-    // Only the target's 16 KiB HDA BAR is accepted, not its 1 MiB DSP BAR.
-    if (Memory->u.Memory.Length != 0x4000) {
+    // Match the target's HDA and DSP BAR lengths before accessing MMIO.
+    if (HdaMemory->u.Memory.Length != 0x4000 ||
+        DspMemory->u.Memory.Length != 0x100000) {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
-    registers = (PUCHAR)MmMapIoSpaceEx(Memory->u.Memory.Start, 0x40,
+    registers = (PUCHAR)MmMapIoSpaceEx(HdaMemory->u.Memory.Start, 0x4000,
                                        PAGE_READONLY | PAGE_NOCACHE);
     if (registers == NULL) {
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -52,12 +61,35 @@ SofProbeReadHdaRegisters(_In_ WDFDEVICE Device,
     statests = READ_REGISTER_USHORT((PUSHORT)(registers + 0x0e));
     gcap2 = READ_REGISTER_USHORT((PUSHORT)(registers + 0x12));
     llch = READ_REGISTER_ULONG((PULONG)(registers + 0x14));
-    MmUnmapIoSpace(registers, 0x40);
+    capPointer = llch & 0xffff;
+    if (capPointer < 0x100 || capPointer > 0x3ffc ||
+        (capPointer & 3) != 0) {
+        MmUnmapIoSpace(registers, 0x4000);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+    capHeader = READ_REGISTER_ULONG((PULONG)(registers + capPointer));
+    MmUnmapIoSpace(registers, 0x4000);
+
+    // BAR4 on the Linux HDA/SOF path: read status only, never power cores on.
+    dspRegisters = (PUCHAR)MmMapIoSpaceEx(DspMemory->u.Memory.Start, 0x100,
+                                          PAGE_READONLY | PAGE_NOCACHE);
+    if (dspRegisters == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    adspcs = READ_REGISTER_ULONG((PULONG)(dspRegisters + 0x04));
+    adspis = READ_REGISTER_ULONG((PULONG)(dspRegisters + 0x0c));
+    hipct = READ_REGISTER_ULONG((PULONG)(dspRegisters + 0x40));
+    hipci = READ_REGISTER_ULONG((PULONG)(dspRegisters + 0x48));
+    MmUnmapIoSpace(dspRegisters, 0x100);
 
     KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
                "SOFPROBE: GCAP=%04lx version=%lu.%lu GCTL=%08lx "
                "STATESTS=%04lx GCAP2=%04lx LLCH=%08lx\n",
                gcap, vmaj, vmin, gctl, statests, gcap2, llch));
+    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+               "SOFPROBE: cap@%04lx=%08lx ADSPCS=%08lx ADSPIS=%08lx "
+               "HIPCT=%08lx HIPCI=%08lx\n",
+               capPointer, capHeader, adspcs, adspis, hipct, hipci));
 
     status = WdfDeviceOpenRegistryKey(Device, PLUGPLAY_REGKEY_DEVICE,
                                       KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES,
@@ -72,6 +104,12 @@ SofProbeReadHdaRegisters(_In_ WDFDEVICE Device,
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeStatests", statests);
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeGcap2", gcap2);
     if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeLlch", llch);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeCapOffset", capPointer);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeCapHeader", capHeader);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeAdspcs", adspcs);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeAdspis", adspis);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeHipct", hipct);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeHipci", hipci);
     WdfRegistryClose(key);
     return status;
 }
@@ -116,8 +154,8 @@ SofProbeEvtPrepareHardware(
     ULONG index;
     ULONG count;
     PCM_PARTIAL_RESOURCE_DESCRIPTOR hdaMemory = NULL;
+    PCM_PARTIAL_RESOURCE_DESCRIPTOR dspMemory = NULL;
 
-    UNREFERENCED_PARAMETER(Device);
     UNREFERENCED_PARAMETER(ResourcesRaw);
 
     count = WdfCmResourceListGetCount(ResourcesTranslated);
@@ -142,6 +180,11 @@ SofProbeEvtPrepareHardware(
                     return STATUS_DEVICE_CONFIGURATION_ERROR;
                 }
                 hdaMemory = resource;
+            } else if (resource->u.Memory.Length == 0x100000) {
+                if (dspMemory != NULL) {
+                    return STATUS_DEVICE_CONFIGURATION_ERROR;
+                }
+                dspMemory = resource;
             }
             break;
         case CmResourceTypeInterrupt:
@@ -163,8 +206,8 @@ SofProbeEvtPrepareHardware(
             break;
         }
     }
-    if (hdaMemory == NULL) {
+    if (hdaMemory == NULL || dspMemory == NULL) {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
-    return SofProbeReadHdaRegisters(Device, hdaMemory);
+    return SofProbeReadRegisters(Device, hdaMemory, dspMemory);
 }
