@@ -1908,6 +1908,119 @@ SofProbeStopSession(_In_ WDFREQUEST Request,
     WdfRequestComplete(Request, STATUS_SUCCESS);
 }
 
+static BOOLEAN
+SofProbeAllowedIpc3Command(_In_ ULONG Command)
+{
+    switch (Command) {
+    case 0xd0010000: // Read-only firmware memory usage.
+    case 0x30100000: // Topology pipeline create.
+    case 0x30200000: // Topology buffer create.
+    case 0x30010000: // Topology component create.
+    case 0x30030000: // Topology component connect.
+    case 0x30130000: // Topology pipeline complete.
+    case 0x80010000: // DAI configuration.
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static VOID
+SofProbeSessionExchange(_In_ WDFREQUEST Request,
+                        _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                        _In_ size_t OutputBufferLength,
+                        _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_IPC3_EXCHANGE_REQUEST input;
+    PSOFPROBE_IPC3_SESSION_MEMORY_RESULT result;
+    ULONG words[96];
+    ULONG size;
+    ULONG i;
+    PUCHAR dsp;
+    PULONG hipcidr;
+    PULONG hipcida;
+    LARGE_INTEGER delay;
+    NTSTATUS status;
+
+    if (InputBufferLength < FIELD_OFFSET(SOFPROBE_IPC3_EXCHANGE_REQUEST,
+                                         RequestWords) + 8 ||
+        InputBufferLength > sizeof(SOFPROBE_IPC3_EXCHANGE_REQUEST) ||
+        OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    if (!Context->SessionActive || Context->SessionDsp == NULL) {
+        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+        return;
+    }
+    status = WdfRequestRetrieveInputBuffer(Request, InputBufferLength,
+                                           (PVOID *)&input, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    size = input->RequestSize;
+    if (input->Version != 1 || size < 8 || size > sizeof(words) ||
+        (size & 3) != 0 ||
+        InputBufferLength != FIELD_OFFSET(SOFPROBE_IPC3_EXCHANGE_REQUEST,
+                                          RequestWords) + size ||
+        input->RequestWords[0] != size ||
+        !SofProbeAllowedIpc3Command(input->RequestWords[1])) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    RtlCopyMemory(words, input->RequestWords, size);
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    dsp = Context->SessionDsp;
+    hipcidr = (PULONG)(dsp + 0xd0);
+    hipcida = (PULONG)(dsp + 0xd4);
+    if (READ_REGISTER_ULONG(hipcidr) != 0 ||
+        READ_REGISTER_ULONG(hipcida) != 0 ||
+        (READ_REGISTER_ULONG((PULONG)(dsp + 0x04)) & 0x01010101) !=
+            0x01010000) {
+        result->Result = 1;
+        goto finish;
+    }
+    for (i = 0; i < size / sizeof(ULONG); ++i)
+        WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)),
+                             words[i]);
+    KeMemoryBarrier();
+    WRITE_REGISTER_ULONG(hipcidr, 0x80000000);
+    delay.QuadPart = -10000;
+    for (i = 0; i < 500; ++i) {
+        if (READ_REGISTER_ULONG(hipcida) & 0x80000000) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->ReplyPolls = i;
+    result->ReplyDoorbell = READ_REGISTER_ULONG(hipcida);
+    if (i == 500) {
+        result->Result = 2;
+        goto finish;
+    }
+    result->ReplySize = READ_REGISTER_ULONG((PULONG)(dsp + 0xa0000));
+    result->ReplyCommand = READ_REGISTER_ULONG((PULONG)(dsp + 0xa0004));
+    result->ReplyError = (LONG)READ_REGISTER_ULONG((PULONG)(dsp + 0xa0008));
+    if (result->ReplySize < 12 || result->ReplySize >
+            sizeof(result->ReplyWords) || (result->ReplySize & 3) != 0) {
+        result->Result = 3;
+    } else {
+        for (i = 0; i < result->ReplySize / sizeof(ULONG); ++i)
+            result->ReplyWords[i] = READ_REGISTER_ULONG(
+                (PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)));
+    }
+    WRITE_REGISTER_ULONG(hipcida, 0x80000000);
+finish:
+    WdfRequestSetInformation(Request, sizeof(*result));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
+}
+
 NTSTATUS
 DriverEntry(
     _In_ PDRIVER_OBJECT DriverObject,
@@ -1994,7 +2107,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_QUERY_IPC3_MEMORY &&
         IoControlCode != IOCTL_SOFPROBE_START_SESSION &&
         IoControlCode != IOCTL_SOFPROBE_SESSION_MEMORY &&
-        IoControlCode != IOCTL_SOFPROBE_STOP_SESSION) {
+        IoControlCode != IOCTL_SOFPROBE_STOP_SESSION &&
+        IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -2006,7 +2120,8 @@ SofProbeEvtIoDeviceControl(
     // Other diagnostics assume the pre-boot register baseline.
     if (context->SessionActive &&
         IoControlCode != IOCTL_SOFPROBE_SESSION_MEMORY &&
-        IoControlCode != IOCTL_SOFPROBE_STOP_SESSION) {
+        IoControlCode != IOCTL_SOFPROBE_STOP_SESSION &&
+        IoControlCode != IOCTL_SOFPROBE_SESSION_EXCHANGE) {
         WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
         return;
     }
@@ -2033,6 +2148,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_STOP_SESSION) {
         SofProbeStopSession(Request, context, OutputBufferLength,
                             InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_SESSION_EXCHANGE) {
+        SofProbeSessionExchange(Request, context, OutputBufferLength,
+                                InputBufferLength);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_READ_STREAM0) {
