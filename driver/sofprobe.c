@@ -227,8 +227,8 @@ SofProbeAcxCopySpeakerSamples(_Out_writes_bytes_(Bytes) UCHAR *Destination,
                              _In_ ULONG Bytes)
 {
     ULONG i;
-    for (i = 0; i < Bytes; i += sizeof(int32_t)) {
-        int32_t sample;
+    for (i = 0; i < Bytes; i += sizeof(LONG)) {
+        LONG sample;
         RtlCopyMemory(&sample, Source + i, sizeof(sample));
         sample = SofPlayAttenuateSpeakerSample(sample);
         RtlCopyMemory(Destination + i, &sample, sizeof(sample));

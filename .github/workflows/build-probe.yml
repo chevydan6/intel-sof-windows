@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
       - name: Build with Windows Driver Kit
         shell: pwsh
         run: msbuild driver/sofprobe.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal

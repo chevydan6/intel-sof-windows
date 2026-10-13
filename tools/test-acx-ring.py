@@ -25,6 +25,8 @@ shim = r'''
 #define _In_reads_bytes_(x)
 #define _Out_writes_bytes_(x)
 typedef void VOID;
+typedef int32_t LONG;
+typedef int64_t LONGLONG;
 typedef uint32_t ULONG, *PULONG;
 typedef uint64_t ULONGLONG;
 typedef unsigned char UCHAR;
