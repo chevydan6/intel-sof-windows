@@ -56,6 +56,9 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     WDFWAITLOCK AcxPowerLock;
     WDFSPINLOCK AcxBufferLock;
     BOOLEAN AcxHardwareReady;
+    BOOLEAN AcxPcmNeedsReset;
+    ULONG AcxPcmResets;
+    ULONG AcxStartPosition;
     PUCHAR AcxRing;
     ULONG AcxStartupCount;
     ULONG AcxStartupStage;
@@ -92,6 +95,7 @@ C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
 #define SOFPROBE_TONE_PAGES 12UL
 
 #ifdef SOFPLAY_INTEGRATED
+static NTSTATUS SofPlayRearmPcmLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context);
 NTSTATUS
 SofProbeAcxClaimStream(_In_ WDFDEVICE Device)
 {
@@ -111,7 +115,13 @@ VOID
 SofProbeAcxSetTimer(_In_ WDFDEVICE Device, _In_opt_ WDFTIMER Timer)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    WDFTIMER previous;
+    WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+    if (Timer != NULL) WdfObjectReference(Timer);
+    previous = context->AcxTimer;
     context->AcxTimer = Timer;
+    WdfWaitLockRelease(context->AcxPowerLock);
+    if (previous != NULL) WdfObjectDereference(previous);
 }
 
 VOID
@@ -141,6 +151,14 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
+    WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+    if (context->AcxHardwareReady && context->AcxPcmNeedsReset) {
+        status = SofPlayRearmPcmLocked(context);
+        if (!NT_SUCCESS(status)) {
+            WdfWaitLockRelease(context->AcxPowerLock);
+            return status;
+        }
+    }
     WdfSpinLockAcquire(context->AcxBufferLock);
     if (context->AcxHardwareReady && context->AcxRing != NULL) {
         RtlZeroMemory(context->AcxRing, SOFPROBE_TONE_BYTES);
@@ -148,6 +166,7 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
         status = STATUS_SUCCESS;
     }
     WdfSpinLockRelease(context->AcxBufferLock);
+    WdfWaitLockRelease(context->AcxPowerLock);
     return status;
 }
 
@@ -232,6 +251,8 @@ SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
         !context->TonePcmConfigured || context->ToneDmaRunning ||
         context->ToneTriggerActive || context->ToneHda == NULL)
         return STATUS_DEVICE_NOT_READY;
+    context->AcxStartPosition = READ_REGISTER_ULONG((PULONG)(context->ToneHda + 0x164));
+    context->AcxPcmNeedsReset = TRUE;
     WRITE_REGISTER_UCHAR(context->ToneHda + 0x163, 0x1c);
     WRITE_REGISTER_ULONG((PULONG)(context->ToneHda + 0x160), 0x00140002);
     delay.QuadPart = -10000;
@@ -2868,11 +2889,13 @@ SofProbeEvtIoDeviceControl(
             return;
         }
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
-        acx->Version = 2;
+        acx->Version = 3;
         acx->StartupCount = context->AcxStartupCount;
         acx->StartupStage = context->AcxStartupStage;
         acx->StartupStatus = (ULONG)context->AcxStartupStatus;
         acx->HardwareReady = context->AcxHardwareReady;
+        acx->PcmResets = context->AcxPcmResets;
+        acx->StartPosition = context->AcxStartPosition;
 
         acx->StreamsCreated = (ULONG)InterlockedCompareExchange(
             &context->AcxStreamsCreated, 0, 0);
@@ -3060,8 +3083,10 @@ SofProbeEvtReleaseHardware(
     {
         PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
 #ifdef SOFPLAY_INTEGRATED
+        WdfWaitLockAcquire(context->AcxPowerLock, NULL);
         if (context->AcxTimer != NULL)
             WdfTimerStop(context->AcxTimer, TRUE);
+        WdfWaitLockRelease(context->AcxPowerLock);
 #endif
 #ifdef SOFPLAY_INTEGRATED
         if (context->RenderCircuitAdded) {

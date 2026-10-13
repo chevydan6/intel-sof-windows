@@ -104,30 +104,13 @@ SofPlaySendStartupIpc(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
 }
 
 static NTSTATUS
-SofPlayPrepareSpeaker(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
+SofPlayPreparePcm(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
 {
-    // Same fixed IPC3 speaker graph verified by test-speaker-tone.ps1.
-    static const ULONG pipeline[] = {48,0x30100000,5,1,0,0,1000,0,5000,0,0,1};
-    static const ULONG buffer[] = {44,0x30200000,2,12,1,0,0,768,0x71,0,0};
-    static const ULONG host[] = {76,0x30010000,0,1,1,0,0,36,0,2,2,0,2,0,0,0,0,0,0};
-    static const ULONG dai[] = {80,0x30010000,4,2,1,0,0,36,0,0,2,0,2,0,0,0,0,1,1,0};
-    static const ULONG config[] = {112,0x80010000,1,1,0x4001,0,0,0,0,0,0,0,0,60,
-                                   0,24000000,48000,3072000,2,3,3,32,32,1,0,0,0,0};
-    static const ULONG hostToBuffer[] = {16,0x30030000,0,2};
-    static const ULONG bufferToDai[] = {16,0x30030000,2,4};
-    static const ULONG complete[] = {12,0x30130000,5};
-    const ULONG *messages[] = {pipeline,buffer,host,dai,config,hostToBuffer,bufferToDai,complete};
     ULONG pcm[27] = {108,0x60010000};
     SOFPROBE_TONE_RESULT tone;
     PHYSICAL_ADDRESS address;
     ULONG offset;
-    ULONG i;
     NTSTATUS status;
-    Context->AcxStartupStage = 3;
-    for (i = 0; i < RTL_NUMBER_OF(messages); ++i) {
-        status = SofPlaySendStartupIpc(Context, messages[i], messages[i][0]);
-        if (!NT_SUCCESS(status)) return status;
-    }
     Context->AcxStartupStage = 4;
     status = SofProbeToneHardware(Context, &tone, 0);
     if (!NT_SUCCESS(status)) return status;
@@ -144,6 +127,57 @@ SofPlayPrepareSpeaker(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     pcm[15] = 2; pcm[17] = 48000; pcm[18] = 0x00020001;
     pcm[19] = 0x00040004; pcm[20] = SOFPROBE_TONE_PERIOD_BYTES; pcm[21] = 1;
     return SofPlaySendStartupIpc(Context, pcm, sizeof(pcm));
+}
+
+static NTSTATUS
+SofPlayPrepareSpeaker(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
+{
+    // Same fixed IPC3 speaker graph verified by test-speaker-tone.ps1.
+    static const ULONG pipeline[] = {48,0x30100000,5,1,0,0,1000,0,5000,0,0,1};
+    static const ULONG buffer[] = {44,0x30200000,2,12,1,0,0,768,0x71,0,0};
+    static const ULONG host[] = {76,0x30010000,0,1,1,0,0,36,0,2,2,0,2,0,0,0,0,0,0};
+    static const ULONG dai[] = {80,0x30010000,4,2,1,0,0,36,0,0,2,0,2,0,0,0,0,1,1,0};
+    static const ULONG config[] = {112,0x80010000,1,1,0x4001,0,0,0,0,0,0,0,0,60,
+                                   0,24000000,48000,3072000,2,3,3,32,32,1,0,0,0,0};
+    static const ULONG hostToBuffer[] = {16,0x30030000,0,2};
+    static const ULONG bufferToDai[] = {16,0x30030000,2,4};
+    static const ULONG complete[] = {12,0x30130000,5};
+    const ULONG *messages[] = {pipeline,buffer,host,dai,config,hostToBuffer,bufferToDai,complete};
+    ULONG i;
+    NTSTATUS status;
+    Context->AcxStartupStage = 3;
+    for (i = 0; i < RTL_NUMBER_OF(messages); ++i) {
+        status = SofPlaySendStartupIpc(Context, messages[i], messages[i][0]);
+        if (!NT_SUCCESS(status)) return status;
+    }
+    return SofPlayPreparePcm(Context);
+}
+
+static NTSTATUS
+SofPlayRearmPcmLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
+{
+    static const ULONG freePcm[] = {12,0x60030000,0};
+    NTSTATUS status;
+    if (Context->ToneDmaRunning || Context->ToneTriggerActive)
+        return STATUS_DEVICE_BUSY;
+    // Serialize new-buffer publication with packet copies and position reads.
+    WdfSpinLockAcquire(Context->AcxBufferLock);
+    Context->AcxHardwareReady = FALSE;
+    Context->AcxRing = NULL;
+    WdfSpinLockRelease(Context->AcxBufferLock);
+    status = SofPlaySendStartupIpc(Context, freePcm, sizeof(freePcm));
+    if (!NT_SUCCESS(status)) return status;
+    if (SofProbeStopToneHardware(Context) != 0) return STATUS_DEVICE_DATA_ERROR;
+    SofProbeFreeToneBuffers(Context);
+    status = SofPlayPreparePcm(Context);
+    if (!NT_SUCCESS(status)) return status;
+    Context->AcxPcmNeedsReset = FALSE;
+    ++Context->AcxPcmResets;
+    Context->AcxStartupStage = 6;
+    WdfSpinLockAcquire(Context->AcxBufferLock);
+    Context->AcxHardwareReady = TRUE;
+    WdfSpinLockRelease(Context->AcxBufferLock);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -173,6 +207,7 @@ SofPlayEvtD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousSta
     WdfSpinLockAcquire(context->AcxBufferLock);
     context->AcxHardwareReady = TRUE;
     WdfSpinLockRelease(context->AcxBufferLock);
+    context->AcxPcmNeedsReset = FALSE;
     context->AcxStartupStage = 6;
 finish:
     // WDF does not call D0Exit when D0Entry fails: unwind here as well.

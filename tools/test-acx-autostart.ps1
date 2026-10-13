@@ -56,7 +56,12 @@ try {
     for ($n = 1; $n -le $Repeat; $n++) {
         Write-Host "Playback $n/$Repeat : three-second Windows WAV, no hardware preparation"
         $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -PlayFile "' + $wav + '"'
-        $process = Start-Process powershell.exe -ArgumentList $arguments -PassThru -NoNewWindow
+        $info = [Diagnostics.ProcessStartInfo]::new('powershell.exe', $arguments)
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $info
+        if (!$process.Start()) { throw 'Could not start the WAV player' }
         try {
             if (!$process.WaitForExit(15000)) {
                 $process.Kill()

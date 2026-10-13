@@ -66,15 +66,18 @@ public static class SofProbeClient {
     public static uint[] Exchange(string path, uint code, byte[] input) {
         using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U || code == 0x22A01CU || code == 0x22A024U || code == 0x22A028U || code == 0x22A02CU || code == 0x22A030U || code == 0x22A034U || code == 0x22A038U || code == 0x22A03CU || code == 0x22A040U || code == 0x22A044U || code == 0x22A048U || code == 0x22A04CU || code == 0x22A050U || code == 0x22A054U || code == 0x22A058U) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[code == 0x22605CU ? 40 : ((code == 0x22A050U || code == 0x22A054U || code == 0x22A058U) ? 44 : ((code == 0x22A044U || code == 0x22A04CU) ? 412 : (code == 0x22A040U ? 720 : (code == 0x22A048U ? 24 : (code == 0x22A03CU ? 716 : (code == 0x22A038U ? 312 : (code == 0x22A034U ? 300 : (code == 0x22A030U ? 192 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))))))))))];
+            byte[] bytes = new byte[code == 0x22605CU ? 128 : ((code == 0x22A050U || code == 0x22A054U || code == 0x22A058U) ? 44 : ((code == 0x22A044U || code == 0x22A04CU) ? 412 : (code == 0x22A040U ? 720 : (code == 0x22A048U ? 24 : (code == 0x22A03CU ? 716 : (code == 0x22A038U ? 312 : (code == 0x22A034U ? 300 : (code == 0x22A030U ? 192 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))))))))))];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
                 : DeviceIoControlWithBuffer(handle, code, input, (uint)input.Length, bytes, (uint)bytes.Length, out returned, IntPtr.Zero);
             if (!ok)
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            if (returned != bytes.Length) throw new Exception("Unexpected snapshot length: " + returned);
-            uint[] words = new uint[bytes.Length / 4];
+            if (code == 0x22605CU) {
+                if (returned < 40 || returned > bytes.Length || (returned & 3) != 0)
+                    throw new Exception("Unexpected ACX status length: " + returned);
+            } else if (returned != bytes.Length) throw new Exception("Unexpected snapshot length: " + returned);
+            uint[] words = new uint[returned / 4];
             for (int i=0; i<words.Length; i++) words[i] = BitConverter.ToUInt32(bytes, i*4);
             return words;
         }
@@ -123,7 +126,7 @@ if ($ReadStream0) {
     } | Format-List
     return
 }
-if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -eq 2)) { throw "Unsupported snapshot version: $($values[0])" }
+if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -in @(2,3))) { throw "Unsupported snapshot version: $($values[0])" }
 if ($AcxStatus) {
     [pscustomobject]@{
         StreamsCreated = $values[1]
@@ -139,6 +142,8 @@ if ($AcxStatus) {
         StartupStage = if ($values[0] -ge 2) { $values[11] } else { $null }
         StartupStatus = if ($values[0] -ge 2) { '0x{0:X8}' -f $values[12] } else { $null }
         HardwareReady = if ($values[0] -ge 2) { $values[13] } else { $null }
+        PcmResets = if ($values[0] -ge 3) { $values[14] } else { $null }
+        StartPosition = if ($values[0] -ge 3) { $values[15] } else { $null }
     } | Format-List
     return
 }

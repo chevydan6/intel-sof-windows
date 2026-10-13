@@ -69,6 +69,8 @@ typedef struct _SOFPROBE_ACX_STATUS {
     ULONG StartupStage;
     ULONG StartupStatus;
     ULONG HardwareReady;
+    ULONG PcmResets;
+    ULONG StartPosition;
 } SOFPROBE_ACX_STATUS, *PSOFPROBE_ACX_STATUS;
 
 typedef struct _SOFPROBE_SNAPSHOT {
