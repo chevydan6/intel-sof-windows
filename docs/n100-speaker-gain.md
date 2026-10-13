@@ -23,3 +23,15 @@ This is strong evidence of missing board attenuation in the prototype, not proof
 This fixed board attenuation follows the existing Windows user/session volume controls. It reproduces the board's maximum level; it does not reproduce ChromeOS's entire 101-step volume curve or implement a dynamic limiter. Status version 5 reports `SpeakerAttenuationDb = 9` so the running binary can be identified after installation.
 
 `python3 tools/test-acx-ring.py` passed with address/undefined-behavior sanitizers. It exercises the actual production conversion and ring code, including signed extrema, polarity, zero, unchanged source samples, wrapped copies, stale-data clearing, and invalid packet sizes. WDK compilation and listening validation are required before calling the correction verified on hardware.
+
+## Build and activation
+
+The first ACX build (`38464275766`) exposed a user-mode CRT header conflict from including `stdint.h` in kernel code. The helper now uses WDK `LONG` / `LONGLONG` types; the Linux test supplies fixed-width equivalents. Both workflows now select x64 MSBuild, and the ACX workflow independently verifies its generated INF with x64 InfVerif, matching the standalone probe's check.
+
+Commit `56b94d8` passed ACX WDK build and INF verification in run [38464522460](https://github.com/chevydan6/windows-sof/actions/runs/38464522460). Standalone probe run `38464522549` also passed. The sanitized ring/sample test passed again after the kernel-type correction.
+
+The package installed as `oem25.inf`, version `20.39.28.945`, signer `C2DF4A97C6DB64210192DF5009B54CB75B85EF2B`. Audio services were stopped before the update and restarted in `finally`. Installation returned zero, with no reboot required. The controller reported `OK`, automatic firmware initialization reached stage 6 with success, and the live status returned `SpeakerAttenuationDb = 9`, proving the new binary was active.
+
+The endpoint's software volume remained -12 dB / `0.4531023` after installation. With the driver's fixed attenuation, the combined attenuation is approximately 21 dB before accounting for app/session volume. Playback quality still needs the user's listening report. Package and recovery scripts are in `C:\Users\dan\sofplay-acx18-test`; rollback covers test certificates through ACX18. Older development packages remain available for recovery.
+
+Two successive WAVs in desktop session 1 (`05:41:19`–`05:41:33`, Windows local time) passed with the new driver. After the first, counters showed one run, 302 submitted packets, and 301 completion notifications. After the second, they showed two runs, 605 submitted packets, 603 completion notifications, and one PCM reset. Both reported zero late packets, zero starting position, no callback failures, hardware status `0x20`, and the 9 dB board attenuation. The playback script and scheduled task returned zero. This verifies repeated transport with the conversion enabled; it does not replace an audible distortion check.
