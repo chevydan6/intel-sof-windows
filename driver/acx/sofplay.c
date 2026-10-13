@@ -110,8 +110,10 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACXPIN pins[2] = { NULL, NULL };
     ACX_PIN_CONFIG pinConfig;
     ACX_DATAFORMAT_CONFIG formatConfig;
+    ACX_JACK_CONFIG jackConfig;
     ACXDATAFORMAT format = NULL;
     ACXDATAFORMATLIST formats;
+    ACXJACK jack = NULL;
     WDF_OBJECT_ATTRIBUTES attributes;
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"N100 SOF Speakers");
     NTSTATUS status;
@@ -146,6 +148,20 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = circuit;
     status = AcxPinCreate(circuit, &attributes, &pinConfig, &pins[1]);
+    if (!NT_SUCCESS(status)) goto finish;
+
+    ACX_JACK_CONFIG_INIT(&jackConfig);
+    jackConfig.Description.ChannelMapping = KSAUDIO_SPEAKER_STEREO;
+    jackConfig.Description.Color = RGB(0, 0, 0);
+    jackConfig.Description.ConnectionType = AcxConnTypeAtapiInternal;
+    jackConfig.Description.GeoLocation = AcxGeoLocFront;
+    jackConfig.Description.GenLocation = AcxGenLocPrimaryBox;
+    jackConfig.Description.PortConnection = AcxPortConnIntegratedDevice;
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = pins[1];
+    status = AcxJackCreate(pins[1], &attributes, &jackConfig, &jack);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = AcxPinAddJacks(pins[1], &jack, 1);
     if (!NT_SUCCESS(status)) goto finish;
 
     ACX_DATAFORMAT_CONFIG_INIT_KS(&formatConfig, &SofPlayPcm48000S32);
