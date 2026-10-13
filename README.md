@@ -14,8 +14,7 @@ passes a separate x64 `InfVerif /w` check. It read the controller's resources,
 interface. A guarded, opt-in [core-0 power test](docs/n100-core0-power-test.md)
 received hardware acknowledgment and restored the powered-off baseline. All
 test packages were removed, and normal boot settings were verified after each
-test. The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, the [IPC3 firmware payload can be staged in DMA memory](docs/n100-ipc3-staging-test.md), the [code-loader](docs/n100-stream-setup-test.md) and [ICCMAX capture](docs/n100-capture-setup-test.md) streams both accepted guarded setup and restoration, the [capture RUN/STOP test](docs/n100-capture-dma-test.md) returned cleanly, and the [DSP ROM acknowledged entry](docs/n100-rom-entry-test.md), but
-audio still does not work: the driver does not load firmware or expose streams.
+test. The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, the [IPC3 firmware payload can be staged in DMA memory](docs/n100-ipc3-staging-test.md), the [code-loader](docs/n100-stream-setup-test.md) and [ICCMAX capture](docs/n100-capture-setup-test.md) streams both accepted guarded setup and restoration, the [capture RUN/STOP test](docs/n100-capture-dma-test.md) returned cleanly, the [DSP ROM acknowledged entry](docs/n100-rom-entry-test.md), and the [firmware reached its entered state](docs/n100-firmware-dma-test.md). Audio still does not work: the probe immediately powers the DSP down and does not implement IPC3 or expose streams.
 
 ## Why a host driver is needed
 
