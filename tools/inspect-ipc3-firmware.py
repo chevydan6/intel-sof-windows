@@ -10,6 +10,12 @@ import struct
 MAGIC = 0x6E614D58  # XMan
 HEADER = struct.Struct('<IIII')
 ELEMENT = struct.Struct('<II')
+WINDOW_HEADER = struct.Struct('<IIII')
+WINDOW = struct.Struct('<IIIIII')
+REGION_NAMES = {
+    0: 'downbox', 1: 'upbox', 2: 'trace', 3: 'debug',
+    4: 'stream', 5: 'registers', 6: 'exception',
+}
 
 
 def inspect(data: bytes) -> dict:
@@ -32,7 +38,32 @@ def inspect(data: bytes) -> dict:
         kind, size = ELEMENT.unpack_from(data, offset)
         if size < ELEMENT.size or size & 3 or size > full_size - offset:
             raise ValueError(f'invalid manifest element at offset {offset}')
-        elements.append({'type': kind, 'offset': offset, 'size': size})
+        element = {'type': kind, 'offset': offset, 'size': size}
+        if kind == 1:
+            inner = offset + ELEMENT.size
+            if size < ELEMENT.size + WINDOW_HEADER.size:
+                raise ValueError('truncated IPC3 window manifest')
+            inner_size, command, ext_type, count = WINDOW_HEADER.unpack_from(data, inner)
+            if inner_size > size - ELEMENT.size or command != 0x70000000 or ext_type != 1:
+                raise ValueError('invalid IPC3 window manifest header')
+            if count == 0 or count > 16 or WINDOW_HEADER.size + count * WINDOW.size > inner_size:
+                raise ValueError('invalid IPC3 window count')
+            windows = []
+            for index in range(count):
+                base = inner + WINDOW_HEADER.size + index * WINDOW.size
+                hdr_size, region_type, window_id, flags, length, relative = WINDOW.unpack_from(data, base)
+                absolute = 0x80000 + window_id * 0x20000 + relative
+                if hdr_size != 0 or absolute + length > 0x100000:
+                    raise ValueError(f'invalid IPC3 window {index}')
+                windows.append({
+                    'region': REGION_NAMES.get(region_type, f'unknown-{region_type}'),
+                    'window_id': window_id,
+                    'flags': flags,
+                    'size': length,
+                    'offset': f'0x{absolute:X}',
+                })
+            element['windows'] = windows
+        elements.append(element)
         offset += size
     payload = data[full_size:]
     return {
