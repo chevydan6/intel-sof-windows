@@ -110,9 +110,11 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACXPIN pins[2] = { NULL, NULL };
     ACX_PIN_CONFIG pinConfig;
     ACX_DATAFORMAT_CONFIG formatConfig;
+    ACX_DATAFORMAT_LIST_CONFIG formatListConfig;
     ACX_JACK_CONFIG jackConfig;
     ACXDATAFORMAT format = NULL;
     ACXDATAFORMATLIST formats;
+    ACXDATAFORMATLIST defaultFormats = NULL;
     ACXJACK jack = NULL;
     WDF_OBJECT_ATTRIBUTES attributes;
     // Match the reference string in sofplay.inx AddInterface directives.
@@ -177,6 +179,21 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     }
     // Windows needs an active default format to initialize the endpoint.
     status = AcxDataFormatListAssignDefaultDataFormat(formats, format);
+    if (!NT_SUCCESS(status)) goto finish;
+    // Shared-mode clients request the default processing mode, not raw mode.
+    // The hardware format is identical in both modes; software processing is
+    // supplied by the Windows audio engine.
+    ACX_DATAFORMAT_LIST_CONFIG_INIT(&formatListConfig);
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = pins[0];
+    status = AcxDataFormatListCreate(Device, &attributes,
+                                     &formatListConfig, &defaultFormats);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = AcxDataFormatListAssignDefaultDataFormat(defaultFormats, format);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = AcxPinAssignModeDataFormatList(pins[0],
+                                           &AUDIO_SIGNALPROCESSINGMODE_DEFAULT,
+                                           defaultFormats);
     if (!NT_SUCCESS(status)) goto finish;
     status = AcxCircuitAddPins(circuit, pins, RTL_NUMBER_OF(pins));
     if (!NT_SUCCESS(status)) goto finish;

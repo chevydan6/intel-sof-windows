@@ -23,7 +23,7 @@ try {
   $set = [Guid]::Parse('8c134960-51ad-11cf-878a-94f801c10000').ToByteArray()
   foreach ($pinId in 0, 1, 2) {
     $ranges = $null
-    foreach ($prop in @(@('CTYPES', 1), @('DATAFLOW', 2), @('DATARANGES', 3), @('COMMUNICATION', 7), @('CATEGORY', 11), @('NAME', 12), @('PROPOSEDATAFORMAT', 14))) {
+    foreach ($prop in @(@('CTYPES', 1), @('DATAFLOW', 2), @('DATARANGES', 3), @('COMMUNICATION', 7), @('CATEGORY', 11), @('NAME', 12), @('PROPOSEDATAFORMAT', 14), @('PROPOSEDATAFORMAT2', 15), @('MODEDATAFORMATS', 16))) {
       $input = New-Object byte[] 32
       [Array]::Copy($set, $input, 16)
       [BitConverter]::GetBytes([uint32]$prop[1]).CopyTo($input, 16)
@@ -42,6 +42,20 @@ try {
       }
     }
     if ($pinId -eq 0 -and $null -ne $ranges) {
+      foreach ($mode in @(@('RAW', '9e90ea20-b493-4fd1-a1a8-7e1361a956cf'), @('DEFAULT', 'c18e2f7e-933d-4965-b7d1-1eef228d2af3'))) {
+        $input = New-Object byte[] 48
+        [Array]::Copy($set, $input, 16)
+        [BitConverter]::GetBytes([uint32]16).CopyTo($input, 16)
+        [BitConverter]::GetBytes([uint32]1).CopyTo($input, 20)
+        [Guid]::Parse($mode[1]).ToByteArray().CopyTo($input, 32)
+        $out = New-Object byte[] 4096
+        $returned = 0
+        $ok = [KsProbeNative]::DeviceIoControl($handle, 0x2f0003, $input, $input.Length,
+          $out, $out.Length, [ref]$returned, [IntPtr]::Zero)
+        $errorCode = if ($ok) { 0 } else { [Runtime.InteropServices.Marshal]::GetLastWin32Error() }
+        $hex = if ($returned -gt 0) { [BitConverter]::ToString($out, 0, [Math]::Min($returned, 128)) } else { '' }
+        Write-Output "pin=$pinId prop=MODEDATAFORMATS mode=$($mode[0]) ok=$ok error=$errorCode bytes=$returned data=$hex"
+      }
       $input = New-Object byte[] (32 + $ranges.Length)
       [Array]::Copy($set, $input, 16)
       [BitConverter]::GetBytes([uint32]4).CopyTo($input, 16)
@@ -55,7 +69,7 @@ try {
       $errorCode = if ($ok) { 0 } else { [Runtime.InteropServices.Marshal]::GetLastWin32Error() }
       $hex = if ($returned -gt 0) { [BitConverter]::ToString($out, 0, [Math]::Min($returned, 128)) } else { '' }
       Write-Output "pin=$pinId prop=DATAINTERSECTION ok=$ok error=$errorCode bytes=$returned data=$hex"
-      foreach ($propertyId in 4, 14) {
+      foreach ($propertyId in 4, 14, 15, 16) {
         $basic = New-Object byte[] 32
         [Array]::Copy($set, $basic, 16)
         [BitConverter]::GetBytes([uint32]$propertyId).CopyTo($basic, 16)
