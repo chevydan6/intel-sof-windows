@@ -1,0 +1,75 @@
+; SPDX-License-Identifier: GPL-2.0-only
+; Experimental N100 ACX render circuit. Do not install until streaming works.
+
+[Version]
+Signature="$Windows NT$"
+Class=MEDIA
+ClassGuid={4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderName%
+DriverVer=10/13/2026,0.1.0.0
+CatalogFile=sofplay.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[SourceDisksNames]
+1=%DiskName%,,,""
+
+[SourceDisksFiles]
+sofplay.sys=1,,
+
+[Manufacturer]
+%ProviderName%=Models,NTamd64.10.0...22000
+
+[Models.NTamd64.10.0...22000]
+%DeviceName%=Install,PCI\VEN_8086&DEV_54C8&SUBSYS_00000000
+
+[Install.NT]
+CopyFiles=DriverFiles
+
+[DriverFiles]
+sofplay.sys
+
+[Install.NT.Services]
+AddService=sofplay,0x00000002,Service
+
+[Service]
+DisplayName=%ServiceName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\sofplay.sys
+
+[Install.NT.Wdf]
+KmdfService=sofplay,WdfSection
+
+[WdfSection]
+KmdfLibraryVersion=$KMDFVERSION$
+
+[Install.NT.Interfaces]
+AddInterface=%KsCategoryAudio%,%SpeakerName%,SpeakerInterface
+AddInterface=%KsCategoryRender%,%SpeakerName%,SpeakerInterface
+AddInterface=%KsCategoryRealtime%,%SpeakerName%,SpeakerInterface
+
+[SpeakerInterface]
+AddReg=SpeakerInterfaceReg
+
+[SpeakerInterfaceReg]
+HKR,,CLSID,,%ProxyClsid%
+HKR,,FriendlyName,,%SpeakerFriendlyName%
+HKR,EP\0,%EndpointAssociation%,,%NodeTypeAny%
+
+[Strings]
+ProviderName="Open SOF Windows Project"
+DiskName="N100 SOF ACX speaker"
+DeviceName="N100 SOF speaker (development)"
+ServiceName="N100 SOF ACX speaker"
+SpeakerName="Speaker0"
+SpeakerFriendlyName="N100 SOF Speakers"
+ProxyClsid="{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KsCategoryAudio="{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KsCategoryRender="{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KsCategoryRealtime="{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+EndpointAssociation="{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2"
+NodeTypeAny="{00000000-0000-0000-0000-000000000000}"

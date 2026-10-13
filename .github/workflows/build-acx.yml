@@ -1,0 +1,26 @@
+name: Build N100 ACX speaker prototype
+
+on:
+  push:
+    paths:
+      - 'driver/acx/**'
+      - '.github/workflows/build-acx.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build with Windows Driver Kit
+        shell: pwsh
+        run: msbuild driver/acx/sofplay.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sofplay-development-package
+          path: driver/acx/x64/Debug/sofplay/
+          if-no-files-found: error
