@@ -1,14 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Read a fixed set of HDA and DSP status registers. No device register writes,
-// DMA, firmware, interrupts, or codec access. Values are saved in the device's
-// registry key so the target can be inspected without a kernel debugger.
+// DMA, firmware, interrupts, or codec access. Boot values are saved in the
+// device registry key; an explicit IOCTL returns a fresh read-only snapshot.
 
 #include <ntddk.h>
 #include <wdf.h>
+#include "sofprobe-ioctl.h"
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SofProbeEvtDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE SofProbeEvtPrepareHardware;
+EVT_WDF_DEVICE_RELEASE_HARDWARE SofProbeEvtReleaseHardware;
+EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL SofProbeEvtIoDeviceControl;
+
+typedef struct _SOFPROBE_DEVICE_CONTEXT {
+    PHYSICAL_ADDRESS HdaStart;
+    PHYSICAL_ADDRESS DspStart;
+    BOOLEAN ResourcesReady;
+} SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPROBE_DEVICE_CONTEXT, SofProbeGetContext)
+
+// {F6B7AB70-381C-4A67-A85C-4A006A7B01DD}
+static const GUID SofProbeInterfaceGuid =
+    { 0xf6b7ab70, 0x381c, 0x4a67, { 0xa8, 0x5c, 0x4a, 0x00, 0x6a, 0x7b, 0x01, 0xdd } };
 
 static NTSTATUS
 SofProbeSaveValue(_In_ WDFKEY Key, _In_ PCWSTR Name, _In_ ULONG Value)
@@ -192,14 +207,98 @@ SofProbeEvtDeviceAdd(
     )
 {
     WDF_PNPPOWER_EVENT_CALLBACKS callbacks;
+    WDF_OBJECT_ATTRIBUTES attributes;
+    WDF_IO_QUEUE_CONFIG queueConfig;
     WDFDEVICE device;
+    NTSTATUS status;
 
     UNREFERENCED_PARAMETER(Driver);
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&callbacks);
     callbacks.EvtDevicePrepareHardware = SofProbeEvtPrepareHardware;
+    callbacks.EvtDeviceReleaseHardware = SofProbeEvtReleaseHardware;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &callbacks);
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, SOFPROBE_DEVICE_CONTEXT);
+    status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
+    if (!NT_SUCCESS(status)) return status;
+    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
+    queueConfig.EvtIoDeviceControl = SofProbeEvtIoDeviceControl;
+    status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES,
+                              WDF_NO_HANDLE);
+    if (!NT_SUCCESS(status)) return status;
+    return WdfDeviceCreateDeviceInterface(device, &SofProbeInterfaceGuid, NULL);
+}
 
-    return WdfDeviceCreate(&DeviceInit, WDF_NO_OBJECT_ATTRIBUTES, &device);
+VOID
+SofProbeEvtIoDeviceControl(
+    _In_ WDFQUEUE Queue,
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength,
+    _In_ ULONG IoControlCode
+    )
+{
+    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(device);
+    PSOFPROBE_SNAPSHOT result;
+    PUCHAR hda = NULL;
+    PUCHAR dsp = NULL;
+    NTSTATUS status;
+
+    UNREFERENCED_PARAMETER(InputBufferLength);
+    if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT) {
+        WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
+        return;
+    }
+    if (!context->ResourcesReady) {
+        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+        return;
+    }
+    if (OutputBufferLength < sizeof(SOFPROBE_SNAPSHOT)) {
+        WdfRequestComplete(Request, STATUS_BUFFER_TOO_SMALL);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(SOFPROBE_SNAPSHOT),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    hda = (PUCHAR)MmMapIoSpaceEx(context->HdaStart, 0x1000,
+                                PAGE_READONLY | PAGE_NOCACHE);
+    if (hda == NULL) {
+        WdfRequestComplete(Request, STATUS_INSUFFICIENT_RESOURCES);
+        return;
+    }
+    dsp = (PUCHAR)MmMapIoSpaceEx(context->DspStart, 0x100,
+                                PAGE_READONLY | PAGE_NOCACHE);
+    if (dsp == NULL) {
+        MmUnmapIoSpace(hda, 0x1000);
+        WdfRequestComplete(Request, STATUS_INSUFFICIENT_RESOURCES);
+        return;
+    }
+    result->Version = 1;
+    result->Gctl = READ_REGISTER_ULONG((PULONG)(hda + 0x08));
+    result->Ppctl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+    result->Ppsts = READ_REGISTER_ULONG((PULONG)(hda + 0x808));
+    result->Adspcs = READ_REGISTER_ULONG((PULONG)(dsp + 0x04));
+    result->Adspis = READ_REGISTER_ULONG((PULONG)(dsp + 0x0c));
+    result->Hipct = READ_REGISTER_ULONG((PULONG)(dsp + 0x40));
+    result->Hipci = READ_REGISTER_ULONG((PULONG)(dsp + 0x48));
+    MmUnmapIoSpace(dsp, 0x100);
+    MmUnmapIoSpace(hda, 0x1000);
+    WdfRequestSetInformation(Request, sizeof(SOFPROBE_SNAPSHOT));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
+}
+
+NTSTATUS
+SofProbeEvtReleaseHardware(
+    _In_ WDFDEVICE Device,
+    _In_ WDFCMRESLIST ResourcesTranslated
+    )
+{
+    UNREFERENCED_PARAMETER(ResourcesTranslated);
+    SofProbeGetContext(Device)->ResourcesReady = FALSE;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -267,5 +366,14 @@ SofProbeEvtPrepareHardware(
     if (hdaMemory == NULL || dspMemory == NULL) {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
-    return SofProbeReadRegisters(Device, hdaMemory, dspMemory);
+    {
+        NTSTATUS status = SofProbeReadRegisters(Device, hdaMemory, dspMemory);
+        if (NT_SUCCESS(status)) {
+            PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+            context->HdaStart = hdaMemory->u.Memory.Start;
+            context->DspStart = dspMemory->u.Memory.Start;
+            context->ResourcesReady = TRUE;
+        }
+        return status;
+    }
 }

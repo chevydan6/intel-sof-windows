@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#pragma once
+
+#include <devioctl.h>
+
+// {F6B7AB70-381C-4A67-A85C-4A006A7B01DD}
+#define SOFPROBE_INTERFACE_GUID_STRING "{F6B7AB70-381C-4A67-A85C-4A006A7B01DD}"
+#define IOCTL_SOFPROBE_READ_SNAPSHOT \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
+
+typedef struct _SOFPROBE_SNAPSHOT {
+    ULONG Version;
+    ULONG Gctl;
+    ULONG Ppctl;
+    ULONG Ppsts;
+    ULONG Adspcs;
+    ULONG Adspis;
+    ULONG Hipct;
+    ULONG Hipci;
+} SOFPROBE_SNAPSHOT;
