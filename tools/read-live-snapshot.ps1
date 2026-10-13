@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 param([switch]$PulseCore0, [switch]$TestDmaAllocation,
       [string]$StageFirmware, [switch]$ReadStream0,
-      [switch]$TestStreamSetup)
+      [switch]$TestStreamSetup, [switch]$ReadBootPreflight)
 $ErrorActionPreference = 'Stop'
 $selected = 0
 if ($PulseCore0) { $selected++ }
@@ -9,6 +9,7 @@ if ($TestDmaAllocation) { $selected++ }
 if ($StageFirmware) { $selected++ }
 if ($ReadStream0) { $selected++ }
 if ($TestStreamSetup) { $selected++ }
+if ($ReadBootPreflight) { $selected++ }
 if ($selected -gt 1) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
@@ -38,7 +39,7 @@ public static class SofProbeClient {
     public static uint[] Exchange(string path, uint code, byte[] input) {
         using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[code == 0x22A014U ? 64 : 32];
+            byte[] bytes = new byte[(code == 0x22A014U || code == 0x226018U) ? 64 : 32];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
@@ -56,7 +57,7 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } else { [uint32]0x226000 }
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } elseif ($ReadBootPreflight) { [uint32]0x226018 } else { [uint32]0x226000 }
 $inputBytes = $null
 if ($StageFirmware) {
     $expectedHash = '8433390E4ABFE40B251FF3DEC41604E7B817501D1097D51AA2F51C11444D3BF0'
@@ -79,6 +80,26 @@ if ($ReadStream0) {
     return
 }
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
+if ($ReadBootPreflight) {
+    [pscustomobject]@{
+        Gcap = ('0x{0:X4}' -f $values[1])
+        CaptureControl = ('0x{0:X6}' -f ($values[2] -band 0x00ffffff))
+        CaptureStatus = ('0x{0:X2}' -f ($values[2] -shr 24))
+        CaptureCbl = $values[3]
+        CaptureLvi = $values[4]
+        CaptureFormat = ('0x{0:X4}' -f $values[5])
+        CaptureBdl = ('0x{0:X8}{1:X8}' -f $values[7], $values[6])
+        ProcessingPipeControl = ('0x{0:X8}' -f $values[8])
+        Ltrp = ('0x{0:X2}' -f $values[9])
+        Adspcs = ('0x{0:X8}' -f $values[10])
+        Hipcidr = ('0x{0:X8}' -f $values[11])
+        Hipcida = ('0x{0:X8}' -f $values[12])
+        Hipcctl = ('0x{0:X8}' -f $values[13])
+        Adspic = ('0x{0:X8}' -f $values[14])
+        Adspis = ('0x{0:X8}' -f $values[15])
+    } | Format-List
+    return
+}
 if ($TestStreamSetup) {
     [pscustomobject]@{
         Version = $values[0]

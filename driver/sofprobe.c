@@ -344,6 +344,60 @@ restore:
 }
 
 static VOID
+SofProbeReadBootPreflight(_In_ WDFREQUEST Request,
+                          _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                          _In_ size_t OutputBufferLength,
+                          _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_BOOT_PREFLIGHT result;
+    PUCHAR hda;
+    PUCHAR dsp;
+    NTSTATUS status;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    hda = (PUCHAR)MmMapIoSpaceEx(Context->HdaStart, 0x2000,
+                                PAGE_READONLY | PAGE_NOCACHE);
+    dsp = (PUCHAR)MmMapIoSpaceEx(Context->DspStart, 0x100,
+                                PAGE_READONLY | PAGE_NOCACHE);
+    if (hda == NULL || dsp == NULL) {
+        if (dsp != NULL) MmUnmapIoSpace(dsp, 0x100);
+        if (hda != NULL) MmUnmapIoSpace(hda, 0x2000);
+        WdfRequestComplete(Request, STATUS_INSUFFICIENT_RESOURCES);
+        return;
+    }
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    result->Gcap = READ_REGISTER_USHORT((PUSHORT)hda);
+    result->CaptureControlAndStatus = READ_REGISTER_ULONG((PULONG)(hda + 0x80));
+    result->CaptureCbl = READ_REGISTER_ULONG((PULONG)(hda + 0x88));
+    result->CaptureLvi = READ_REGISTER_USHORT((PUSHORT)(hda + 0x8c));
+    result->CaptureFormat = READ_REGISTER_USHORT((PUSHORT)(hda + 0x92));
+    result->CaptureBdlLow = READ_REGISTER_ULONG((PULONG)(hda + 0x98));
+    result->CaptureBdlHigh = READ_REGISTER_ULONG((PULONG)(hda + 0x9c));
+    result->ProcessingPipeControl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+    result->Ltrp = READ_REGISTER_UCHAR((PUCHAR)(hda + 0x1048));
+    result->Adspcs = READ_REGISTER_ULONG((PULONG)(dsp + 0x04));
+    result->Hipcidr = READ_REGISTER_ULONG((PULONG)(dsp + 0xd0));
+    result->Hipcida = READ_REGISTER_ULONG((PULONG)(dsp + 0xd4));
+    result->Hipcctl = READ_REGISTER_ULONG((PULONG)(dsp + 0xe8));
+    result->Adspic = READ_REGISTER_ULONG((PULONG)(dsp + 0x08));
+    result->Adspis = READ_REGISTER_ULONG((PULONG)(dsp + 0x0c));
+    MmUnmapIoSpace(dsp, 0x100);
+    MmUnmapIoSpace(hda, 0x2000);
+    WdfRequestSetInformation(Request, sizeof(*result));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
+}
+
+static VOID
 SofProbeReadStream0(_In_ WDFREQUEST Request,
                     _In_ PSOFPROBE_DEVICE_CONTEXT Context,
                     _In_ size_t OutputBufferLength,
@@ -715,7 +769,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION &&
         IoControlCode != IOCTL_SOFPROBE_STAGE_IPC3_FIRMWARE &&
         IoControlCode != IOCTL_SOFPROBE_READ_STREAM0 &&
-        IoControlCode != IOCTL_SOFPROBE_TEST_STREAM_SETUP) {
+        IoControlCode != IOCTL_SOFPROBE_TEST_STREAM_SETUP &&
+        IoControlCode != IOCTL_SOFPROBE_READ_BOOT_PREFLIGHT) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -746,6 +801,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_TEST_STREAM_SETUP) {
         SofProbeTestStreamSetup(Request, context, OutputBufferLength,
                                 InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_READ_BOOT_PREFLIGHT) {
+        SofProbeReadBootPreflight(Request, context, OutputBufferLength,
+                                  InputBufferLength);
         return;
     }
     if (InputBufferLength != 0) {
