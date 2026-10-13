@@ -62,6 +62,9 @@ typedef struct _SOFPROBE_ACX_STATUS {
     ULONG PacketsCompleted;
     ULONG HardwarePosition;
     ULONG HardwareStatus;
+    ULONG CreateAttempts;
+    ULONG LastFailureStage;
+    ULONG LastFailureStatus;
 } SOFPROBE_ACX_STATUS, *PSOFPROBE_ACX_STATUS;
 
 typedef struct _SOFPROBE_SNAPSHOT {

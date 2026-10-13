@@ -59,6 +59,9 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     volatile LONG AcxRunCalls;
     volatile LONG AcxPacketsSubmitted;
     volatile LONG AcxPacketsCompleted;
+    volatile LONG AcxCreateAttempts;
+    volatile LONG AcxLastFailureStage;
+    volatile LONG AcxLastFailureStatus;
 #endif
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 
@@ -111,7 +114,17 @@ SofProbeAcxRecord(_In_ WDFDEVICE Device, _In_ ULONG Event)
     case 2: InterlockedIncrement(&context->AcxRunCalls); break;
     case 3: InterlockedIncrement(&context->AcxPacketsSubmitted); break;
     case 4: InterlockedIncrement(&context->AcxPacketsCompleted); break;
+    case 5: InterlockedIncrement(&context->AcxCreateAttempts); break;
     }
+}
+
+VOID
+SofProbeAcxRecordFailure(_In_ WDFDEVICE Device, _In_ ULONG Stage,
+                         _In_ NTSTATUS Status)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    InterlockedExchange(&context->AcxLastFailureStage, (LONG)Stage);
+    InterlockedExchange(&context->AcxLastFailureStatus, (LONG)Status);
 }
 
 NTSTATUS
@@ -2768,6 +2781,12 @@ SofProbeEvtIoDeviceControl(
             &context->AcxPacketsCompleted, 0, 0);
         acx->HardwarePosition = position;
         acx->HardwareStatus = streamStatus;
+        acx->CreateAttempts = (ULONG)InterlockedCompareExchange(
+            &context->AcxCreateAttempts, 0, 0);
+        acx->LastFailureStage = (ULONG)InterlockedCompareExchange(
+            &context->AcxLastFailureStage, 0, 0);
+        acx->LastFailureStatus = (ULONG)InterlockedCompareExchange(
+            &context->AcxLastFailureStatus, 0, 0);
         WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS,
                                           sizeof(*acx));
         return;

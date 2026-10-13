@@ -25,6 +25,8 @@ NTSTATUS SofProbeAcxClaimStream(_In_ WDFDEVICE Device);
 VOID SofProbeAcxReleaseStream(_In_ WDFDEVICE Device);
 VOID SofProbeAcxSetTimer(_In_ WDFDEVICE Device, _In_opt_ WDFTIMER Timer);
 VOID SofProbeAcxRecord(_In_ WDFDEVICE Device, _In_ ULONG Event);
+VOID SofProbeAcxRecordFailure(_In_ WDFDEVICE Device, _In_ ULONG Stage,
+                             _In_ NTSTATUS Status);
 NTSTATUS SofProbeAcxGetAudioRing(_In_ WDFDEVICE Device,
                                 _Out_ PUCHAR *Buffer,
                                 _Out_ PULONG Bytes);
@@ -191,12 +193,18 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     UNREFERENCED_PARAMETER(Pin);
     UNREFERENCED_PARAMETER(SignalProcessingMode);
     UNREFERENCED_PARAMETER(VarArguments);
+    SofProbeAcxRecord(Device, 5);
     if (AcxDataFormatGetSampleRate(StreamFormat) != 48000 ||
         AcxDataFormatGetChannelsCount(StreamFormat) != 2 ||
-        AcxDataFormatGetBlockAlign(StreamFormat) != 8)
+        AcxDataFormatGetBlockAlign(StreamFormat) != 8) {
+        SofProbeAcxRecordFailure(Device, 1, STATUS_NOT_SUPPORTED);
         return STATUS_NOT_SUPPORTED;
+    }
     status = SofProbeAcxClaimStream(Device);
-    if (!NT_SUCCESS(status)) return status;
+    if (!NT_SUCCESS(status)) {
+        SofProbeAcxRecordFailure(Device, 2, status);
+        return status;
+    }
     ACX_STREAM_CALLBACKS_INIT(&streamCallbacks);
     streamCallbacks.EvtAcxStreamPrepareHardware = SofPlayEvtStreamPrepare;
     streamCallbacks.EvtAcxStreamReleaseHardware = SofPlayEvtStreamRelease;
@@ -204,7 +212,10 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     streamCallbacks.EvtAcxStreamPause = SofPlayEvtStreamPause;
     status = AcxStreamInitAssignAcxStreamCallbacks(StreamInit,
                                                    &streamCallbacks);
-    if (!NT_SUCCESS(status)) goto fail;
+    if (!NT_SUCCESS(status)) {
+        SofProbeAcxRecordFailure(Device, 3, status);
+        goto fail;
+    }
     ACX_RT_STREAM_CALLBACKS_INIT(&rtCallbacks);
     rtCallbacks.EvtAcxStreamGetHwLatency = SofPlayEvtGetLatency;
     rtCallbacks.EvtAcxStreamAllocateRtPackets = SofPlayEvtAllocatePackets;
@@ -214,14 +225,20 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     rtCallbacks.EvtAcxStreamGetPresentationPosition = SofPlayEvtGetPosition;
     status = AcxStreamInitAssignAcxRtStreamCallbacks(StreamInit,
                                                      &rtCallbacks);
-    if (!NT_SUCCESS(status)) goto fail;
+    if (!NT_SUCCESS(status)) {
+        SofProbeAcxRecordFailure(Device, 4, status);
+        goto fail;
+    }
     AcxStreamInitSetAcxRtStreamSupportsNotifications(StreamInit);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes,
                                             SOFPLAY_STREAM_CONTEXT);
     attributes.EvtCleanupCallback = SofPlayEvtStreamCleanup;
     status = AcxRtStreamCreate(Device, Circuit, &attributes, &StreamInit,
                                &stream);
-    if (!NT_SUCCESS(status)) goto fail;
+    if (!NT_SUCCESS(status)) {
+        SofProbeAcxRecordFailure(Device, 5, status);
+        goto fail;
+    }
     context = SofPlayGetStreamContext(stream);
     context->Device = Device;
     context->Stream = stream;
@@ -230,6 +247,7 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     attributes.ParentObject = stream;
     status = WdfTimerCreate(&timerConfig, &attributes, &context->Timer);
     if (!NT_SUCCESS(status)) {
+        SofProbeAcxRecordFailure(Device, 6, status);
         WdfObjectDelete(stream);
         return status;
     }
@@ -353,6 +371,8 @@ SofPlayEvtStreamPrepare(_In_ ACXSTREAM Stream)
     NTSTATUS status = SofProbeAcxGetAudioRing(context->Device,
                                               &context->Ring,
                                               &context->RingBytes);
+    if (!NT_SUCCESS(status))
+        SofProbeAcxRecordFailure(context->Device, 7, status);
     if (NT_SUCCESS(status)) {
         context->LastPosition = 0;
         context->LinearPosition = 0;
@@ -385,7 +405,10 @@ SofPlayEvtStreamRun(_In_ ACXSTREAM Stream)
     if (context->Ring == NULL || context->Packets == NULL)
         return STATUS_DEVICE_NOT_READY;
     status = SofProbeAcxStart(context->Device);
-    if (!NT_SUCCESS(status)) return status;
+    if (!NT_SUCCESS(status)) {
+        SofProbeAcxRecordFailure(context->Device, 8, status);
+        return status;
+    }
     status = SofProbeAcxGetPosition(context->Device, &position,
                                     &streamStatus);
     if (!NT_SUCCESS(status)) {
