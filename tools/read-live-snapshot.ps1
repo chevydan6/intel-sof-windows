@@ -2,7 +2,8 @@
 param([switch]$PulseCore0, [switch]$TestDmaAllocation,
       [string]$StageFirmware, [switch]$ReadStream0,
       [switch]$TestStreamSetup, [switch]$ReadBootPreflight,
-      [switch]$TestCaptureSetup, [switch]$ReadPciConfig)
+      [switch]$TestCaptureSetup, [switch]$ReadPciConfig,
+      [switch]$TestCaptureDma)
 $ErrorActionPreference = 'Stop'
 $selected = 0
 if ($PulseCore0) { $selected++ }
@@ -13,6 +14,7 @@ if ($TestStreamSetup) { $selected++ }
 if ($ReadBootPreflight) { $selected++ }
 if ($TestCaptureSetup) { $selected++ }
 if ($ReadPciConfig) { $selected++ }
+if ($TestCaptureDma) { $selected++ }
 if ($selected -gt 1) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
@@ -40,9 +42,9 @@ public static class SofProbeClient {
         return new string(buffer).Split(new char[]{'\0'}, StringSplitOptions.RemoveEmptyEntries);
     }
     public static uint[] Exchange(string path, uint code, byte[] input) {
-        using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U || code == 0x22A01CU) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+        using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U || code == 0x22A01CU || code == 0x22A024U) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[(code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32];
+            byte[] bytes = new byte[code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32)];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
@@ -60,7 +62,7 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } elseif ($ReadBootPreflight) { [uint32]0x226018 } elseif ($TestCaptureSetup) { [uint32]0x22A01C } elseif ($ReadPciConfig) { [uint32]0x226020 } else { [uint32]0x226000 }
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } elseif ($ReadBootPreflight) { [uint32]0x226018 } elseif ($TestCaptureSetup) { [uint32]0x22A01C } elseif ($ReadPciConfig) { [uint32]0x226020 } elseif ($TestCaptureDma) { [uint32]0x22A024 } else { [uint32]0x226000 }
 $inputBytes = $null
 if ($StageFirmware) {
     $expectedHash = '8433390E4ABFE40B251FF3DEC41604E7B817501D1097D51AA2F51C11444D3BF0'
@@ -83,6 +85,38 @@ if ($ReadStream0) {
     return
 }
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
+if ($TestCaptureDma) {
+    [pscustomobject]@{
+        Version = $values[0]
+        BeforeControl = ('0x{0:X8}' -f $values[1])
+        ConfiguredControl = ('0x{0:X8}' -f $values[2])
+        RunningControl = ('0x{0:X8}' -f $values[3])
+        StoppedControl = ('0x{0:X8}' -f $values[4])
+        Position = $values[5]
+        CaptureStatus = ('0x{0:X2}' -f $values[6])
+        ConfiguredPpctl = ('0x{0:X8}' -f $values[7])
+        RestoredControl = ('0x{0:X8}' -f $values[8])
+        RestoredPpctl = ('0x{0:X8}' -f $values[9])
+        RestoredCbl = $values[10]
+        RestoredLvi = $values[11]
+        RestoredFormat = $values[12]
+        RestoredBdl = ('0x{0:X8}{1:X8}' -f $values[14], $values[13])
+        RestoredLtrp = ('0x{0:X2}' -f $values[15])
+        Adspcs = ('0x{0:X8}' -f $values[16])
+        PciCommand = ('0x{0:X4}' -f $values[17])
+        StopPolls = $values[18]
+        Result = $values[19]
+    } | Format-List
+    if ($values[19] -ne 0 -or ($values[3] -band 2) -eq 0 -or
+        ($values[4] -band 2) -ne 0 -or $values[8] -ne $values[1] -or
+        $values[9] -ne 0x40000000 -or $values[10] -ne 0 -or
+        $values[11] -ne 0 -or $values[12] -ne 0 -or
+        $values[13] -ne 0 -or $values[14] -ne 0 -or
+        $values[15] -ne 0xA9 -or $values[16] -ne 0x00000F0F) {
+        throw 'Capture DMA did not start, stop, and restore the observed baseline'
+    }
+    return
+}
 if ($ReadPciConfig) {
     [pscustomobject]@{
         VendorDevice = ('0x{0:X8}' -f $values[1])

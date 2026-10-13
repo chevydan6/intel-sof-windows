@@ -23,6 +23,8 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x807, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 #define IOCTL_SOFPROBE_READ_PCI_CONFIG \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_SOFPROBE_TEST_CAPTURE_DMA \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x809, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 
 typedef struct _SOFPROBE_SNAPSHOT {
     ULONG Version;
@@ -116,3 +118,26 @@ typedef struct _SOFPROBE_PCI_SNAPSHOT {
     ULONG Reserved1;
     ULONG Reserved2;
 } SOFPROBE_PCI_SNAPSHOT, *PSOFPROBE_PCI_SNAPSHOT;
+
+typedef struct _SOFPROBE_CAPTURE_DMA_RESULT {
+    ULONG Version;
+    ULONG BeforeControl;
+    ULONG ConfiguredControl;
+    ULONG RunningControl;
+    ULONG StoppedControl;
+    ULONG Position;
+    ULONG CaptureStatus;
+    ULONG ConfiguredPpctl;
+    ULONG RestoredControl;
+    ULONG RestoredPpctl;
+    ULONG RestoredCbl;
+    ULONG RestoredLvi;
+    ULONG RestoredFormat;
+    ULONG RestoredBdlLow;
+    ULONG RestoredBdlHigh;
+    ULONG RestoredLtrp;
+    ULONG Adspcs;
+    ULONG PciCommand;
+    ULONG StopPolls;
+    ULONG Result;
+} SOFPROBE_CAPTURE_DMA_RESULT, *PSOFPROBE_CAPTURE_DMA_RESULT;

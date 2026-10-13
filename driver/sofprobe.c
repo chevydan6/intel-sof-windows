@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Development probe for bounded HDA/DSP observations and opt-in tests.
-// The stream setup test does not start DMA, release a DSP core, or run firmware.
+// Capture DMA is limited to a short ring transfer; no DSP core is released
+// and no firmware is run by this probe.
 
 #include <ntddk.h>
 #include <wdf.h>
@@ -24,6 +25,9 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN PowerPulseAttempted;
     BOOLEAN StreamSetupAttempted;
     BOOLEAN CaptureSetupAttempted;
+    BOOLEAN CaptureDmaAttempted;
+    WDFCOMMONBUFFER UnstoppedCaptureBdl;
+    WDFCOMMONBUFFER UnstoppedCapturePayload;
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPROBE_DEVICE_CONTEXT, SofProbeGetContext)
@@ -344,6 +348,229 @@ restore:
     MmUnmapIoSpace(hda, 0x1000);
     WdfRequestSetInformation(Request, sizeof(*result));
     WdfRequestComplete(Request, STATUS_SUCCESS);
+}
+
+static VOID
+SofProbeTestCaptureDma(_In_ WDFREQUEST Request,
+                       _In_ WDFDEVICE Device,
+                       _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                       _In_ size_t OutputBufferLength,
+                       _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_CAPTURE_DMA_RESULT result;
+    WDFCOMMONBUFFER bdl = NULL;
+    WDFCOMMONBUFFER payload = NULL;
+    BUS_INTERFACE_STANDARD bus;
+    UCHAR pciConfig[8];
+    PUCHAR hda = NULL;
+    PUCHAR dsp = NULL;
+    PHYSICAL_ADDRESS bdlAddress;
+    PHYSICAL_ADDRESS payloadAddress;
+    SOFPROBE_BDL_ENTRY *entry;
+    ULONG beforeControl;
+    ULONG beforePpctl;
+    ULONG vendorDevice;
+    UCHAR beforeLtrp;
+    ULONG current;
+    ULONG i;
+    LARGE_INTEGER delay;
+    NTSTATUS status;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    if (Context->CaptureDmaAttempted || Context->UnstoppedCaptureBdl != NULL) {
+        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) goto finish;
+    RtlZeroMemory(&bus, sizeof(bus));
+    status = WdfFdoQueryForInterface(Device, &GUID_BUS_INTERFACE_STANDARD,
+                                     (PINTERFACE)&bus, sizeof(bus), 1, NULL);
+    if (!NT_SUCCESS(status)) goto finish;
+    RtlZeroMemory(pciConfig, sizeof(pciConfig));
+    i = bus.GetBusData(bus.Context, PCI_WHICHSPACE_CONFIG,
+                       pciConfig, 0, sizeof(pciConfig));
+    bus.InterfaceDereference(bus.Context);
+    if (i != sizeof(pciConfig)) {
+        status = STATUS_DEVICE_DATA_ERROR;
+        goto finish;
+    }
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    RtlCopyMemory(&vendorDevice, pciConfig, sizeof(vendorDevice));
+    RtlCopyMemory(&result->PciCommand, pciConfig + 4, sizeof(USHORT));
+    if (vendorDevice != 0x54c88086 ||
+        (result->PciCommand & 6) != 6) {
+        status = STATUS_DEVICE_CONFIGURATION_ERROR;
+        goto finish;
+    }
+    status = WdfCommonBufferCreate(Context->DmaEnabler, 128,
+                                   WDF_NO_OBJECT_ATTRIBUTES, &bdl);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = WdfCommonBufferCreate(Context->DmaEnabler, 4096,
+                                   WDF_NO_OBJECT_ATTRIBUTES, &payload);
+    if (!NT_SUCCESS(status)) goto finish;
+    bdlAddress = WdfCommonBufferGetAlignedLogicalAddress(bdl);
+    payloadAddress = WdfCommonBufferGetAlignedLogicalAddress(payload);
+    if ((bdlAddress.QuadPart & 127) != 0 ||
+        (payloadAddress.QuadPart & 127) != 0) {
+        status = STATUS_DATATYPE_MISALIGNMENT;
+        goto finish;
+    }
+    RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(bdl), 128);
+    RtlZeroMemory(WdfCommonBufferGetAlignedVirtualAddress(payload), 4096);
+    entry = (SOFPROBE_BDL_ENTRY *)WdfCommonBufferGetAlignedVirtualAddress(bdl);
+    entry[0].Address = (ULONGLONG)payloadAddress.QuadPart;
+    entry[0].Length = 2048;
+    entry[1].Address = (ULONGLONG)payloadAddress.QuadPart + 2048;
+    entry[1].Length = 2048;
+
+    hda = (PUCHAR)MmMapIoSpaceEx(Context->HdaStart, 0x2000,
+                                PAGE_READWRITE | PAGE_NOCACHE);
+    dsp = (PUCHAR)MmMapIoSpaceEx(Context->DspStart, 0x100,
+                                PAGE_READONLY | PAGE_NOCACHE);
+    if (hda == NULL || dsp == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto finish;
+    }
+    beforeControl = READ_REGISTER_ULONG((PULONG)(hda + 0x80));
+    beforePpctl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+    beforeLtrp = READ_REGISTER_UCHAR(hda + 0x1048);
+    if (READ_REGISTER_USHORT((PUSHORT)hda) != 0x9701 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x08)) != 1 ||
+        beforeControl != 0x00040000 || beforePpctl != 0x40000000 ||
+        beforeLtrp != 0xa9 ||
+        READ_REGISTER_ULONG((PULONG)(dsp + 0x04)) != 0x00000f0f ||
+        READ_REGISTER_ULONG((PULONG)(dsp + 0xd0)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(dsp + 0xd4)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x88)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x8c)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x92)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x98)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x9c)) != 0) {
+        status = STATUS_DEVICE_CONFIGURATION_ERROR;
+        goto finish;
+    }
+    Context->CaptureDmaAttempted = TRUE;
+    result->BeforeControl = beforeControl;
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x80), beforeControl | 1);
+    for (i = 0; i < 100; ++i) {
+        if (READ_REGISTER_ULONG((PULONG)(hda + 0x80)) & 1) break;
+        KeStallExecutionProcessor(5);
+    }
+    if (i == 100) {
+        result->Result = 1;
+        goto restore;
+    }
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x80), beforeControl);
+    KeStallExecutionProcessor(3);
+    for (i = 0; i < 100; ++i) {
+        if ((READ_REGISTER_ULONG((PULONG)(hda + 0x80)) & 1) == 0) break;
+        KeStallExecutionProcessor(5);
+    }
+    if (i == 100) {
+        result->Result = 1;
+        goto restore;
+    }
+    current = READ_REGISTER_ULONG((PULONG)(hda + 0x80)) & 0x00ffffff;
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x80),
+                         (current & ~0x00f00000) | 0x00100000);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x804), beforePpctl | 1);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x98), bdlAddress.LowPart);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x9c), bdlAddress.HighPart);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x88), 4096);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x8c), 1);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x92), 0x40);
+    WRITE_REGISTER_UCHAR(hda + 0x1048, (beforeLtrp & 0xc0) | 0x1f);
+    result->ConfiguredControl = READ_REGISTER_ULONG((PULONG)(hda + 0x80)) & 0x00ffffff;
+    result->ConfiguredPpctl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+    if (result->ConfiguredControl != 0x00140000 ||
+        result->ConfiguredPpctl != (beforePpctl | 1) ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x98)) != bdlAddress.LowPart ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x9c)) != (ULONG)bdlAddress.HighPart ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x88)) != 4096 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x8c)) != 1 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x92)) != 0x40 ||
+        READ_REGISTER_UCHAR(hda + 0x1048) != 0x9f) {
+        result->Result = 2;
+        goto restore;
+    }
+
+    KeMemoryBarrier();
+    WRITE_REGISTER_UCHAR(hda + 0x80, 2);
+    for (i = 0; i < 100; ++i) {
+        if (READ_REGISTER_UCHAR(hda + 0x80) & 2) break;
+        KeStallExecutionProcessor(5);
+    }
+    result->RunningControl = READ_REGISTER_ULONG((PULONG)(hda + 0x80));
+    if (i == 100) result->Result = 3;
+    if (result->Result == 0) {
+        delay.QuadPart = -20000; // 2 ms, relative 100 ns units
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        result->Position = READ_REGISTER_ULONG((PULONG)(hda + 0x84));
+        result->CaptureStatus = READ_REGISTER_UCHAR(hda + 0x83);
+        if (result->CaptureStatus & 0x18) result->Result = 6;
+    }
+    WRITE_REGISTER_UCHAR(hda + 0x80, 0);
+    delay.QuadPart = -10000; // 1 ms per stop poll, up to 300 ms
+    for (i = 0; i < 300; ++i) {
+        if ((READ_REGISTER_UCHAR(hda + 0x80) & 2) == 0) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->StopPolls = i;
+    result->StoppedControl = READ_REGISTER_ULONG((PULONG)(hda + 0x80));
+    if (i == 300) {
+        result->Result = 4;
+        // Preserve DMA buffers if the hardware still owns them.
+        Context->UnstoppedCaptureBdl = bdl;
+        Context->UnstoppedCapturePayload = payload;
+        bdl = NULL;
+        payload = NULL;
+        goto complete;
+    }
+
+restore:
+    WRITE_REGISTER_UCHAR(hda + 0x83, 0x1c);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x804), beforePpctl);
+    WRITE_REGISTER_UCHAR(hda + 0x1048, beforeLtrp);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x98), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x9c), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x88), 0);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x8c), 0);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x92), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x80), beforeControl);
+    result->RestoredControl = READ_REGISTER_ULONG((PULONG)(hda + 0x80));
+    result->RestoredPpctl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+    result->RestoredCbl = READ_REGISTER_ULONG((PULONG)(hda + 0x88));
+    result->RestoredLvi = READ_REGISTER_USHORT((PUSHORT)(hda + 0x8c));
+    result->RestoredFormat = READ_REGISTER_USHORT((PUSHORT)(hda + 0x92));
+    result->RestoredBdlLow = READ_REGISTER_ULONG((PULONG)(hda + 0x98));
+    result->RestoredBdlHigh = READ_REGISTER_ULONG((PULONG)(hda + 0x9c));
+    result->RestoredLtrp = READ_REGISTER_UCHAR(hda + 0x1048);
+    result->Adspcs = READ_REGISTER_ULONG((PULONG)(dsp + 0x04));
+    if (result->RestoredControl != beforeControl ||
+        result->RestoredPpctl != beforePpctl ||
+        result->RestoredCbl != 0 || result->RestoredLvi != 0 ||
+        result->RestoredFormat != 0 || result->RestoredBdlLow != 0 ||
+        result->RestoredBdlHigh != 0 || result->RestoredLtrp != beforeLtrp ||
+        result->Adspcs != 0x00000f0f) {
+        result->Result = 5;
+    }
+
+complete:
+    WdfRequestSetInformation(Request, sizeof(*result));
+    status = STATUS_SUCCESS;
+
+finish:
+    if (dsp != NULL) MmUnmapIoSpace(dsp, 0x100);
+    if (hda != NULL) MmUnmapIoSpace(hda, 0x2000);
+    if (payload != NULL) WdfObjectDelete(payload);
+    if (bdl != NULL) WdfObjectDelete(bdl);
+    WdfRequestComplete(Request, status);
 }
 
 static VOID
@@ -985,7 +1212,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_TEST_STREAM_SETUP &&
         IoControlCode != IOCTL_SOFPROBE_READ_BOOT_PREFLIGHT &&
         IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_SETUP &&
-        IoControlCode != IOCTL_SOFPROBE_READ_PCI_CONFIG) {
+        IoControlCode != IOCTL_SOFPROBE_READ_PCI_CONFIG &&
+        IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_DMA) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -1031,6 +1259,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_READ_PCI_CONFIG) {
         SofProbeReadPciConfig(Request, device, OutputBufferLength,
                               InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_TEST_CAPTURE_DMA) {
+        SofProbeTestCaptureDma(Request, device, context, OutputBufferLength,
+                               InputBufferLength);
         return;
     }
     if (InputBufferLength != 0) {
