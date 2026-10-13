@@ -357,10 +357,12 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                      _In_ PSOFPROBE_DEVICE_CONTEXT Context,
                      _In_ size_t OutputBufferLength,
                      _In_ size_t InputBufferLength,
-                     _In_ BOOLEAN RunFirmwareDma)
+                     _In_ BOOLEAN RunFirmwareDma,
+                     _In_ BOOLEAN CaptureIpc3Ready)
 {
     PSOFPROBE_ROM_ENTRY_RESULT result;
     PSOFPROBE_FIRMWARE_DMA_RESULT dmaResult = NULL;
+    PSOFPROBE_IPC3_READY_RESULT readyResult = NULL;
     PUCHAR hda = NULL;
     PUCHAR dsp = NULL;
     PULONG outputControl;
@@ -386,8 +388,10 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     BOOLEAN spibTouched = FALSE;
     BOOLEAN fwEntered = FALSE;
     ULONGLONG firmwareDeadline;
-    size_t resultBytes = RunFirmwareDma ? sizeof(SOFPROBE_FIRMWARE_DMA_RESULT)
-                                        : sizeof(SOFPROBE_ROM_ENTRY_RESULT);
+    size_t dspMapBytes = CaptureIpc3Ready ? 0x82000 : 0x81000;
+    size_t resultBytes = CaptureIpc3Ready ? sizeof(SOFPROBE_IPC3_READY_RESULT)
+                       : (RunFirmwareDma ? sizeof(SOFPROBE_FIRMWARE_DMA_RESULT)
+                                         : sizeof(SOFPROBE_ROM_ENTRY_RESULT));
     NTSTATUS status;
 
     if (InputBufferLength != 0 || OutputBufferLength < resultBytes) {
@@ -406,6 +410,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
                                             (PVOID *)&result, NULL);
     if (!NT_SUCCESS(status)) goto finish;
     if (RunFirmwareDma) dmaResult = (PSOFPROBE_FIRMWARE_DMA_RESULT)result;
+    if (CaptureIpc3Ready) readyResult = (PSOFPROBE_IPC3_READY_RESULT)result;
     if (RunFirmwareDma) {
         RtlZeroMemory(&bus, sizeof(bus));
         status = WdfFdoQueryForInterface(Device, &GUID_BUS_INTERFACE_STANDARD,
@@ -433,7 +438,7 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
     }
     hda = (PUCHAR)MmMapIoSpaceEx(Context->HdaStart, 0x1000,
                                 PAGE_READWRITE | PAGE_NOCACHE);
-    dsp = (PUCHAR)MmMapIoSpaceEx(Context->DspStart, 0x81000,
+    dsp = (PUCHAR)MmMapIoSpaceEx(Context->DspStart, dspMapBytes,
                                 PAGE_READWRITE | PAGE_NOCACHE);
     if (hda == NULL || dsp == NULL) {
         status = STATUS_INSUFFICIENT_RESOURCES;
@@ -463,6 +468,9 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
         READ_REGISTER_ULONG(hipcidr) != 0 ||
         READ_REGISTER_ULONG(hipcida) != 0 ||
         READ_REGISTER_ULONG((PULONG)(dsp + 0xe8)) != 0 ||
+        (CaptureIpc3Ready &&
+         (READ_REGISTER_ULONG((PULONG)(dsp + 0xc0)) != 0 ||
+          READ_REGISTER_ULONG((PULONG)(dsp + 0xc4)) != 0)) ||
         (RunFirmwareDma &&
          ((READ_REGISTER_ULONG(spibControl) & 0x80) != 0 ||
           READ_REGISTER_ULONG(spibValue) != 0))) {
@@ -633,6 +641,34 @@ SofProbeTestRomEntry(_In_ WDFREQUEST Request,
             dmaResult->FirmwareError = READ_REGISTER_ULONG((PULONG)(dsp + 0x80004));
             if (!fwEntered && result->Result == 0) result->Result = 11;
         }
+        if (CaptureIpc3Ready && result->Result == 0) {
+            // Observe the firmware-initiated IPC3 READY doorbell and uplink
+            // mailbox without enabling an interrupt for which this probe
+            // does not yet have an ISR.
+            firmwareDeadline = KeQueryInterruptTime() + 10000000ULL;
+            for (i = 0; KeQueryInterruptTime() < firmwareDeadline; ++i) {
+                current = READ_REGISTER_ULONG((PULONG)(dsp + 0xc0));
+                if (current & 0x80000000) break;
+                (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+            }
+            readyResult->ReadyPolls = i;
+            readyResult->Hipctdr = READ_REGISTER_ULONG((PULONG)(dsp + 0xc0));
+            readyResult->Hipctdd = READ_REGISTER_ULONG((PULONG)(dsp + 0xc8));
+            readyResult->Hipctda = READ_REGISTER_ULONG((PULONG)(dsp + 0xc4));
+            if ((readyResult->Hipctdr & 0x80000000) == 0) {
+                result->Result = 14;
+            } else {
+                readyResult->MailboxSize =
+                    READ_REGISTER_ULONG((PULONG)(dsp + 0x81000));
+                readyResult->MailboxCommand =
+                    READ_REGISTER_ULONG((PULONG)(dsp + 0x81004));
+                if (readyResult->MailboxSize < 8 ||
+                    readyResult->MailboxSize > 4096 ||
+                    (readyResult->MailboxCommand & 0xf0000000) != 0x70000000) {
+                    result->Result = 15;
+                }
+            }
+        }
         dmaResult->OutputPosition = READ_REGISTER_ULONG((PULONG)(hda + 0x164));
         dmaResult->OutputStatus = READ_REGISTER_UCHAR(hda + 0x163);
     }
@@ -730,7 +766,7 @@ cleanup:
     status = STATUS_SUCCESS;
 
 finish:
-    if (dsp != NULL) MmUnmapIoSpace(dsp, 0x81000);
+    if (dsp != NULL) MmUnmapIoSpace(dsp, dspMapBytes);
     if (hda != NULL) MmUnmapIoSpace(hda, 0x1000);
     WdfRequestComplete(Request, status);
 }
@@ -1600,7 +1636,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_READ_PCI_CONFIG &&
         IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_DMA &&
         IoControlCode != IOCTL_SOFPROBE_TEST_ROM_ENTRY &&
-        IoControlCode != IOCTL_SOFPROBE_TEST_FIRMWARE_DMA) {
+        IoControlCode != IOCTL_SOFPROBE_TEST_FIRMWARE_DMA &&
+        IoControlCode != IOCTL_SOFPROBE_TEST_IPC3_READY) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -1655,12 +1692,17 @@ SofProbeEvtIoDeviceControl(
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_ROM_ENTRY) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, FALSE);
+                             InputBufferLength, FALSE, FALSE);
         return;
     }
     if (IoControlCode == IOCTL_SOFPROBE_TEST_FIRMWARE_DMA) {
         SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
-                             InputBufferLength, TRUE);
+                             InputBufferLength, TRUE, FALSE);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_TEST_IPC3_READY) {
+        SofProbeTestRomEntry(Request, device, context, OutputBufferLength,
+                             InputBufferLength, TRUE, TRUE);
         return;
     }
     if (InputBufferLength != 0) {
