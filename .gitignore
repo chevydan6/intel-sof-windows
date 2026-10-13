@@ -2,3 +2,4 @@ build/
 driver/x64/
 driver/*.log
 *.user
+__pycache__/
