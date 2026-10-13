@@ -5,8 +5,11 @@ The first target is an Intel N100 laptop with a PCI audio controller at
 `8086:54c8` and an I2C Realtek RT5682 codec (`ACPI\10EC5682`). This repository
 contains diagnostic tooling and an experimental ACX speaker driver. A controlled
 Windows WAV playback test completed audio packets through the hardware DMA path.
-This is **not yet a driver for everyday use**: firmware startup still requires
-the development test harness, and boot/sleep recovery remains unfinished.
+The driver now loads the verified firmware and prepares the speaker automatically.
+Three consecutive Windows WAV transfers passed before and after a full reboot,
+without the preparation harness.
+This is **still a development driver**; full power recovery and other audio routes
+remain unfinished. See the [automatic startup tests](docs/n100-acx-autostart-test.md).
 
 The development probe builds with the WDK in Windows CI and its generated INF
 passes a separate x64 `InfVerif /w` check. It read the controller's resources,
@@ -19,7 +22,7 @@ The hardware-test reports record installation and rollback state for each test.
 
 The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, the [IPC3 firmware payload can be staged in DMA memory](docs/n100-ipc3-staging-test.md), the [code-loader](docs/n100-stream-setup-test.md) and [ICCMAX capture](docs/n100-capture-setup-test.md) streams both accepted guarded setup and restoration, the [capture RUN/STOP test](docs/n100-capture-dma-test.md) returned cleanly, the [DSP ROM acknowledged entry](docs/n100-rom-entry-test.md), the [firmware reached its entered state](docs/n100-firmware-dma-test.md), the [IPC3 firmware-ready notification arrived](docs/n100-ipc3-ready-test.md), a [host IPC3 request received a valid reply](docs/n100-ipc3-transaction-test.md), and a [managed DSP session handled a second request](docs/n100-ipc3-session-test.md).
 
-The [ACX playback investigation](docs/n100-acx-playback-test.md) now records successful Windows format negotiation and a three-second WAV transfer (301 packets submitted and completed), after correcting packet-buffer alignment and preparing SOF before starting Windows audio services. Audible confirmation of that app test is pending; the earlier [hardware tone](docs/n100-speaker-tone-test.md) was heard. Automatic firmware startup, interrupt-driven IPC service, general topology support, and power recovery remain to be implemented.
+The [ACX playback investigation](docs/n100-acx-playback-test.md) now records successful Windows format negotiation and a three-second WAV transfer (301 packets submitted and completed), after correcting packet-buffer alignment and preparing SOF before starting Windows audio services. Audible confirmation of that app test is pending; the earlier [hardware tone](docs/n100-speaker-tone-test.md) was heard. The [automatic startup work](docs/n100-acx-autostart-test.md) moves firmware and speaker setup into the driver and resets PCM between streams. Interrupt-driven IPC service, general topology support, and comprehensive power recovery remain unfinished.
 
 ## Why a host driver is needed
 

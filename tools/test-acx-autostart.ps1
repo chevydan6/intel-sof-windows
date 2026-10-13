@@ -15,7 +15,7 @@ function Read-Status {
     Write-Host $text
     $result = @{}
     foreach ($field in @('StartupCount','StartupStage','HardwareReady','RunCalls',
-                         'PacketsSubmitted','PacketsCompleted','CreateAttempts')) {
+                         'PacketsSubmitted','PacketsCompleted','CreateAttempts','PcmResets','StartPosition')) {
         if ($text -notmatch "(?m)^$field\s*:\s*(\d+)") { throw "Missing $field in ACX status" }
         $result[$field] = [uint64]$Matches[1]
     }
@@ -71,7 +71,8 @@ try {
             if ($process.ExitCode -ne 0) { throw "Player failed: $($process.ExitCode)" }
         } finally { $process.Dispose() }
         $after = Read-Status
-        if ($after.StartupCount -ne $before.StartupCount -or
+        if ($after.StartPosition -ne 0 -or
+            $after.StartupCount -ne $before.StartupCount -or
             $after.RunCalls -le $before.RunCalls -or
             $after.PacketsSubmitted - $before.PacketsSubmitted -lt 250 -or
             $after.PacketsCompleted - $before.PacketsCompleted -lt 250) {
