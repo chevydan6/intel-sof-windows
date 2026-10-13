@@ -25,6 +25,8 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_READ_ACCESS)
 #define IOCTL_SOFPROBE_TEST_CAPTURE_DMA \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x809, METHOD_BUFFERED, FILE_WRITE_ACCESS)
+#define IOCTL_SOFPROBE_TEST_ROM_ENTRY \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80a, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 
 typedef struct _SOFPROBE_SNAPSHOT {
     ULONG Version;
@@ -141,3 +143,30 @@ typedef struct _SOFPROBE_CAPTURE_DMA_RESULT {
     ULONG StopPolls;
     ULONG Result;
 } SOFPROBE_CAPTURE_DMA_RESULT, *PSOFPROBE_CAPTURE_DMA_RESULT;
+
+typedef struct _SOFPROBE_ROM_ENTRY_RESULT {
+    ULONG Version;
+    ULONG BeforeAdspcs;
+    ULONG PoweredAdspcs;
+    ULONG ResetReleasedAdspcs;
+    ULONG RunningAdspcs;
+    ULONG RomControl;
+    ULONG IpcAck;
+    ULONG RomStatus;
+    ULONG RomError;
+    ULONG AckPolls;
+    ULONG RomPolls;
+    ULONG RestoredAdspcs;
+    ULONG RestoredOutputControl;
+    ULONG RestoredPpctl;
+    ULONG RestoredHipcidr;
+    ULONG RestoredHipcida;
+    ULONG Ssp0Before;
+    ULONG Ssp0After;
+    ULONG Ssp1Before;
+    ULONG Ssp1After;
+    ULONG Ssp2Before;
+    ULONG Ssp2After;
+    ULONG Result;
+    ULONG Reserved;
+} SOFPROBE_ROM_ENTRY_RESULT, *PSOFPROBE_ROM_ENTRY_RESULT;

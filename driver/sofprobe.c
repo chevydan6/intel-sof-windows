@@ -26,6 +26,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN StreamSetupAttempted;
     BOOLEAN CaptureSetupAttempted;
     BOOLEAN CaptureDmaAttempted;
+    BOOLEAN RomEntryAttempted;
     WDFCOMMONBUFFER UnstoppedCaptureBdl;
     WDFCOMMONBUFFER UnstoppedCapturePayload;
 } SOFPROBE_DEVICE_CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
@@ -348,6 +349,267 @@ restore:
     MmUnmapIoSpace(hda, 0x1000);
     WdfRequestSetInformation(Request, sizeof(*result));
     WdfRequestComplete(Request, STATUS_SUCCESS);
+}
+
+static VOID
+SofProbeTestRomEntry(_In_ WDFREQUEST Request,
+                     _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                     _In_ size_t OutputBufferLength,
+                     _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_ROM_ENTRY_RESULT result;
+    PUCHAR hda = NULL;
+    PUCHAR dsp = NULL;
+    PULONG outputControl;
+    PULONG ppctl;
+    PULONG adspcs;
+    PULONG hipcidr;
+    PULONG hipcida;
+    ULONG beforeOutputControl;
+    ULONG beforePpctl;
+    ULONG current;
+    ULONG i;
+    PHYSICAL_ADDRESS bdlAddress;
+    LARGE_INTEGER delay;
+    BOOLEAN powerRequested = FALSE;
+    BOOLEAN sspTouched = FALSE;
+    NTSTATUS status;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    if (Context->RomEntryAttempted) {
+        WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
+        return;
+    }
+    if (Context->FirmwareBdl == NULL || Context->FirmwarePayload == NULL) {
+        WdfRequestComplete(Request, STATUS_DEVICE_NOT_READY);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) goto finish;
+    bdlAddress = WdfCommonBufferGetAlignedLogicalAddress(Context->FirmwareBdl);
+    if ((bdlAddress.QuadPart & 127) != 0) {
+        status = STATUS_DATATYPE_MISALIGNMENT;
+        goto finish;
+    }
+    hda = (PUCHAR)MmMapIoSpaceEx(Context->HdaStart, 0x1000,
+                                PAGE_READWRITE | PAGE_NOCACHE);
+    dsp = (PUCHAR)MmMapIoSpaceEx(Context->DspStart, 0x81000,
+                                PAGE_READWRITE | PAGE_NOCACHE);
+    if (hda == NULL || dsp == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto finish;
+    }
+    outputControl = (PULONG)(hda + 0x160);
+    ppctl = (PULONG)(hda + 0x804);
+    adspcs = (PULONG)(dsp + 0x04);
+    hipcidr = (PULONG)(dsp + 0xd0);
+    hipcida = (PULONG)(dsp + 0xd4);
+    beforeOutputControl = READ_REGISTER_ULONG(outputControl);
+    beforePpctl = READ_REGISTER_ULONG(ppctl);
+    if (READ_REGISTER_USHORT((PUSHORT)hda) != 0x9701 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x08)) != 1 ||
+        beforeOutputControl != 0x00040000 || beforePpctl != 0x40000000 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != 0 ||
+        READ_REGISTER_ULONG(adspcs) != 0x00000f0f ||
+        READ_REGISTER_ULONG(hipcidr) != 0 ||
+        READ_REGISTER_ULONG(hipcida) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(dsp + 0xe8)) != 0) {
+        status = STATUS_DEVICE_CONFIGURATION_ERROR;
+        goto finish;
+    }
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    result->BeforeAdspcs = READ_REGISTER_ULONG(adspcs);
+    result->RomControl = 0x81004000;
+    Context->RomEntryAttempted = TRUE;
+
+    // The code-loader BDL is staged, but this test never sets output RUN.
+    WRITE_REGISTER_ULONG(outputControl, beforeOutputControl | 1);
+    for (i = 0; i < 100; ++i) {
+        if (READ_REGISTER_ULONG(outputControl) & 1) break;
+        KeStallExecutionProcessor(5);
+    }
+    if (i == 100) {
+        result->Result = 1;
+        goto cleanup;
+    }
+    WRITE_REGISTER_ULONG(outputControl, beforeOutputControl);
+    KeStallExecutionProcessor(3);
+    for (i = 0; i < 100; ++i) {
+        if ((READ_REGISTER_ULONG(outputControl) & 1) == 0) break;
+        KeStallExecutionProcessor(5);
+    }
+    if (i == 100) {
+        result->Result = 1;
+        goto cleanup;
+    }
+    current = READ_REGISTER_ULONG(outputControl) & 0x00ffffff;
+    WRITE_REGISTER_ULONG(outputControl,
+                         (current & ~0x00f00000) | 0x00100000);
+    WRITE_REGISTER_ULONG(ppctl, beforePpctl | 0x80);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x178), bdlAddress.LowPart);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x17c), bdlAddress.HighPart);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x168), 524288);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x16c), 1);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x172), 0x40);
+    result->Reserved = READ_REGISTER_ULONG(outputControl) & 0x00ffffff;
+    if (result->Reserved != 0x00140000 ||
+        READ_REGISTER_ULONG(ppctl) != (beforePpctl | 0x80) ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != bdlAddress.LowPart ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != (ULONG)bdlAddress.HighPart ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 524288 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 1 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0x40) {
+        result->Result = 2;
+        goto cleanup;
+    }
+
+    // Follow the Alder Lake-N Linux ROM ordering: power, ROM IPC, release
+    // reset, then release stall. The SSP setting is restored before powerdown.
+    powerRequested = TRUE;
+    WRITE_REGISTER_ULONG(adspcs, READ_REGISTER_ULONG(adspcs) | 0x00010000);
+    delay.QuadPart = -10000; // 1 ms between bounded polls
+    for (i = 0; i < 50; ++i) {
+        if (READ_REGISTER_ULONG(adspcs) & 0x01000000) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->PoweredAdspcs = READ_REGISTER_ULONG(adspcs);
+    if (i == 50) {
+        result->Result = 3;
+        goto cleanup;
+    }
+    result->Ssp0Before = READ_REGISTER_ULONG((PULONG)(dsp + 0x10004));
+    result->Ssp1Before = READ_REGISTER_ULONG((PULONG)(dsp + 0x11004));
+    result->Ssp2Before = READ_REGISTER_ULONG((PULONG)(dsp + 0x12004));
+    sspTouched = TRUE;
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0x10004),
+                         result->Ssp0Before | 0x03000000);
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0x11004),
+                         result->Ssp1Before | 0x03000000);
+    WRITE_REGISTER_ULONG((PULONG)(dsp + 0x12004),
+                         result->Ssp2Before | 0x03000000);
+    WRITE_REGISTER_ULONG(hipcidr, result->RomControl);
+    WRITE_REGISTER_ULONG(adspcs, READ_REGISTER_ULONG(adspcs) & ~1UL);
+    for (i = 0; i < 50; ++i) {
+        if ((READ_REGISTER_ULONG(adspcs) & 1) == 0) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->ResetReleasedAdspcs = READ_REGISTER_ULONG(adspcs);
+    if (i == 50) {
+        result->Result = 4;
+        goto cleanup;
+    }
+    WRITE_REGISTER_ULONG(adspcs, READ_REGISTER_ULONG(adspcs) & ~0x100UL);
+    for (i = 0; i < 50; ++i) {
+        current = READ_REGISTER_ULONG(adspcs);
+        if ((current & 0x01010000) == 0x01010000 &&
+            (current & 0x00000101) == 0) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->RunningAdspcs = READ_REGISTER_ULONG(adspcs);
+    if (i == 50) {
+        result->Result = 5;
+        goto cleanup;
+    }
+    for (i = 0; i < 500; ++i) {
+        current = READ_REGISTER_ULONG(hipcida);
+        if (current & 0x80000000) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->IpcAck = READ_REGISTER_ULONG(hipcida);
+    result->AckPolls = i;
+    if (i == 500) {
+        result->Result = 6;
+        goto cleanup;
+    }
+    WRITE_REGISTER_ULONG(hipcida, 0x80000000); // W1C ROM IPC DONE
+    for (i = 0; i < 300; ++i) {
+        current = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
+        if ((current & 0x00ffffff) == 1) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->RomPolls = i;
+    result->RomStatus = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
+    result->RomError = READ_REGISTER_ULONG((PULONG)(dsp + 0x80004));
+    if (i == 300) result->Result = 7;
+
+cleanup:
+    if (powerRequested) {
+        if (result->RomStatus == 0 && result->Result != 0 &&
+            (result->RunningAdspcs & 0x01000000) != 0) {
+            result->RomStatus = READ_REGISTER_ULONG((PULONG)(dsp + 0x80000));
+            result->RomError = READ_REGISTER_ULONG((PULONG)(dsp + 0x80004));
+        }
+        if (sspTouched) {
+            current = READ_REGISTER_ULONG((PULONG)(dsp + 0x10004));
+            WRITE_REGISTER_ULONG((PULONG)(dsp + 0x10004),
+                                 (current & ~0x03000000) |
+                                 (result->Ssp0Before & 0x03000000));
+            current = READ_REGISTER_ULONG((PULONG)(dsp + 0x11004));
+            WRITE_REGISTER_ULONG((PULONG)(dsp + 0x11004),
+                                 (current & ~0x03000000) |
+                                 (result->Ssp1Before & 0x03000000));
+            current = READ_REGISTER_ULONG((PULONG)(dsp + 0x12004));
+            WRITE_REGISTER_ULONG((PULONG)(dsp + 0x12004),
+                                 (current & ~0x03000000) |
+                                 (result->Ssp2Before & 0x03000000));
+            result->Ssp0After = READ_REGISTER_ULONG((PULONG)(dsp + 0x10004));
+            result->Ssp1After = READ_REGISTER_ULONG((PULONG)(dsp + 0x11004));
+            result->Ssp2After = READ_REGISTER_ULONG((PULONG)(dsp + 0x12004));
+        }
+        WRITE_REGISTER_ULONG(adspcs, READ_REGISTER_ULONG(adspcs) | 0x00000101);
+        for (i = 0; i < 50; ++i) {
+            if ((READ_REGISTER_ULONG(adspcs) & 0x00000101) == 0x00000101) break;
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+        WRITE_REGISTER_ULONG(adspcs,
+                             READ_REGISTER_ULONG(adspcs) & ~0x00010000UL);
+        for (i = 0; i < 50; ++i) {
+            if ((READ_REGISTER_ULONG(adspcs) & 0x01000000) == 0) break;
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        }
+    }
+    WRITE_REGISTER_ULONG(ppctl, beforePpctl);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x178), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x17c), 0);
+    WRITE_REGISTER_ULONG((PULONG)(hda + 0x168), 0);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x16c), 0);
+    WRITE_REGISTER_USHORT((PUSHORT)(hda + 0x172), 0);
+    WRITE_REGISTER_ULONG(outputControl, beforeOutputControl);
+    result->RestoredAdspcs = READ_REGISTER_ULONG(adspcs);
+    result->RestoredOutputControl = READ_REGISTER_ULONG(outputControl);
+    result->RestoredPpctl = READ_REGISTER_ULONG(ppctl);
+    result->RestoredHipcidr = READ_REGISTER_ULONG(hipcidr);
+    result->RestoredHipcida = READ_REGISTER_ULONG(hipcida);
+    if (result->RestoredAdspcs != result->BeforeAdspcs ||
+        result->RestoredOutputControl != beforeOutputControl ||
+        result->RestoredPpctl != beforePpctl ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != 0 ||
+        READ_REGISTER_ULONG((PULONG)(hda + 0x168)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 0 ||
+        READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0 ||
+        (sspTouched &&
+         (((result->Ssp0After ^ result->Ssp0Before) & 0x03000000) != 0 ||
+          ((result->Ssp1After ^ result->Ssp1Before) & 0x03000000) != 0 ||
+          ((result->Ssp2After ^ result->Ssp2Before) & 0x03000000) != 0))) {
+        result->Result = 8;
+    }
+    WdfRequestSetInformation(Request, sizeof(*result));
+    status = STATUS_SUCCESS;
+
+finish:
+    if (dsp != NULL) MmUnmapIoSpace(dsp, 0x81000);
+    if (hda != NULL) MmUnmapIoSpace(hda, 0x1000);
+    WdfRequestComplete(Request, status);
 }
 
 static VOID
@@ -1213,7 +1475,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_READ_BOOT_PREFLIGHT &&
         IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_SETUP &&
         IoControlCode != IOCTL_SOFPROBE_READ_PCI_CONFIG &&
-        IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_DMA) {
+        IoControlCode != IOCTL_SOFPROBE_TEST_CAPTURE_DMA &&
+        IoControlCode != IOCTL_SOFPROBE_TEST_ROM_ENTRY) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -1264,6 +1527,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_TEST_CAPTURE_DMA) {
         SofProbeTestCaptureDma(Request, device, context, OutputBufferLength,
                                InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_TEST_ROM_ENTRY) {
+        SofProbeTestRomEntry(Request, context, OutputBufferLength,
+                             InputBufferLength);
         return;
     }
     if (InputBufferLength != 0) {
