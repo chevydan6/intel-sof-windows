@@ -6,12 +6,13 @@ The first target is an Intel N100 laptop with a PCI audio controller at
 currently contains the verified hardware baseline and diagnostic tooling; it
 does **not** yet contain an installable audio driver.
 
-The first read-only PCI probe now builds on a Windows 2022 runner with the WDK.
-Its generated INF also passes a separate x64 `InfVerif /w` check. The probe
-loaded on the N100 and reported the controller's assigned resources. It was
-then removed and the laptop was returned to normal boot settings. See
-[the hardware test record](docs/n100-probe-test.md). This does not mean audio
-works: the probe does not load firmware or expose audio streams.
+The read-only PCI probe builds on a Windows 2022 runner with the WDK, and its
+generated INF passes a separate x64 `InfVerif /w` check. It loaded on the N100,
+reported the controller's assigned resources, and read its HDA identification
+and capability registers. Both test packages were removed and the laptop was
+returned to normal boot settings. See the [PCI probe](docs/n100-probe-test.md)
+and [register probe](docs/n100-register-test.md) records. Audio still does not
+work: the probe does not load firmware or expose audio streams.
 
 ## Why a host driver is needed
 
@@ -23,7 +24,7 @@ needs a working path to the audio graph.
 
 ## First target
 
-The target machine currently reports Windows PnP problem code 28 for both
+The initial target baseline reported Windows PnP problem code 28 for both
 `PCI\VEN_8086&DEV_54C8` and `ACPI\10EC5682`. Linux maps `54c8` to Alder Lake-N
 SOF (`HDA_ADL_N`) and defaults that platform to IPC3 with `sof-adl-n.ri`.
 See [hardware/n100-windows.json](hardware/n100-windows.json) and
