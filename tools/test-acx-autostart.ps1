@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Test an automatically initialized driver without preparing firmware or
 # stopping/restarting Windows audio services. A child player has a time limit.
-param([ValidateRange(1,10)][int]$Repeat = 2, [string]$PlayFile)
+param([ValidateRange(1,10)][int]$Repeat = 2, [string]$PlayFile,
+      [switch]$RequireNewStream)
 $ErrorActionPreference = 'Stop'
 if ($PlayFile) {
     $player = [System.Media.SoundPlayer]::new($PlayFile)
@@ -73,12 +74,16 @@ try {
         $after = Read-Status
         if ($after.StartPosition -ne 0 -or
             $after.StartupCount -ne $before.StartupCount -or
-            $after.RunCalls -le $before.RunCalls -or
+            $after.RunCalls -lt $before.RunCalls -or
+            ($RequireNewStream -and $after.RunCalls -eq $before.RunCalls) -or
             $after.PacketsSubmitted - $before.PacketsSubmitted -lt 250 -or
             $after.PacketsCompleted - $before.PacketsCompleted -lt 250) {
             throw 'Playback did not advance the expected driver/DMA counters'
         }
-        Write-Host "Playback $n verified by driver counters. Audible confirmation is separate."
+        if ($after.RunCalls -eq $before.RunCalls) {
+            Write-Host 'Windows reused an existing shared stream; counters include other active audio clients.'
+        }
+        Write-Host "Playback $n completed with DMA progress. Audible confirmation is separate."
         $before = $after
         Start-Sleep -Seconds 1
     }

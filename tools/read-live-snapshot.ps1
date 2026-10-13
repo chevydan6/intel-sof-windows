@@ -126,7 +126,7 @@ if ($ReadStream0) {
     } | Format-List
     return
 }
-if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -in @(2,3))) { throw "Unsupported snapshot version: $($values[0])" }
+if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -in @(2,3,4))) { throw "Unsupported snapshot version: $($values[0])" }
 if ($AcxStatus) {
     [pscustomobject]@{
         StreamsCreated = $values[1]
@@ -144,6 +144,9 @@ if ($AcxStatus) {
         HardwareReady = if ($values[0] -ge 2) { $values[13] } else { $null }
         PcmResets = if ($values[0] -ge 3) { $values[14] } else { $null }
         StartPosition = if ($values[0] -ge 3) { $values[15] } else { $null }
+        LatePackets = if ($values[0] -ge 4) { $values[16] } else { $null }
+        MaxAdvanceBytes = if ($values[0] -ge 4) { $values[17] } else { $null }
+        PacketBytes = if ($values[0] -ge 4) { $values[18] } else { $null }
     } | Format-List
     return
 }

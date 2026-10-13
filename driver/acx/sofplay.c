@@ -34,6 +34,9 @@ NTSTATUS SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
 NTSTATUS SofProbeAcxGetPosition(_In_ WDFDEVICE Device,
                                _Out_ PULONG Position,
                                _Out_ PUCHAR Status);
+NTSTATUS SofProbeAcxGetProgress(_In_ WDFDEVICE Device,
+                               _Out_ PULONGLONG Bytes,
+                               _Out_ PULONGLONG Qpc);
 NTSTATUS SofProbeAcxStart(_In_ WDFDEVICE Device);
 NTSTATUS SofProbeAcxPause(_In_ WDFDEVICE Device);
 
@@ -58,8 +61,6 @@ typedef struct _SOFPLAY_STREAM_CONTEXT {
     ULONG PacketCount;
     ULONG PacketSize;
     ULONG RingBytes;
-    ULONG LastPosition;
-    ULONGLONG LinearPosition;
     ULONG NextComplete;
     BOOLEAN Running;
 } SOFPLAY_STREAM_CONTEXT, *PSOFPLAY_STREAM_CONTEXT;
@@ -281,6 +282,8 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     context->Device = Device;
     context->Stream = stream;
     WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, SofPlayEvtTimer, 1);
+    timerConfig.UseHighResolutionTimer = WdfTrue;
+    timerConfig.TolerableDelay = 0;
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = stream;
     status = WdfTimerCreate(&timerConfig, &attributes, &context->Timer);
@@ -421,8 +424,6 @@ SofPlayEvtStreamPrepare(_In_ ACXSTREAM Stream)
     if (!NT_SUCCESS(status))
         SofProbeAcxRecordFailure(context->Device, 7, status);
     if (NT_SUCCESS(status)) {
-        context->LastPosition = 0;
-        context->LinearPosition = 0;
         context->NextComplete = 0;
     }
     return status;
@@ -461,7 +462,8 @@ SofPlayEvtStreamRun(_In_ ACXSTREAM Stream)
         (VOID)SofProbeAcxPause(context->Device);
         return status;
     }
-    context->LastPosition = position;
+    // Include bytes consumed during the firmware START handshake. Starting
+    // the software counter here would permanently lag the DMA cursor.
     context->Running = TRUE;
     SofProbeAcxRecord(context->Device, 2);
     WdfTimerStart(context->Timer, WDF_REL_TIMEOUT_IN_MS(1));
@@ -523,8 +525,10 @@ SofPlayEvtGetPosition(_In_ ACXSTREAM Stream,
                        _Out_ PULONGLONG QPCPosition)
 {
     PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
-    *PositionInBlocks = context->LinearPosition / 8;
-    *QPCPosition = (ULONGLONG)KeQueryPerformanceCounter(NULL).QuadPart;
+    ULONGLONG bytes;
+    NTSTATUS status = SofProbeAcxGetProgress(context->Device, &bytes, QPCPosition);
+    if (!NT_SUCCESS(status)) return status;
+    *PositionInBlocks = bytes / 8;
     return STATUS_SUCCESS;
 }
 
@@ -533,24 +537,17 @@ SofPlayEvtTimer(_In_ WDFTIMER Timer)
 {
     ACXSTREAM stream = (ACXSTREAM)WdfTimerGetParentObject(Timer);
     PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(stream);
-    ULONG position;
-    UCHAR status;
+    ULONGLONG bytes;
+    ULONGLONG qpc;
     if (!context->Running || context->PacketSize == 0 ||
-        !NT_SUCCESS(SofProbeAcxGetPosition(context->Device, &position,
-                                            &status)) ||
-        (status & 0x1c) != 0 || position >= context->RingBytes)
+        !NT_SUCCESS(SofProbeAcxGetProgress(context->Device, &bytes, &qpc)))
         return;
-    context->LinearPosition +=
-        (position + context->RingBytes - context->LastPosition) %
-        context->RingBytes;
-    context->LastPosition = position;
-    while (context->LinearPosition >=
+    while (bytes >=
            ((ULONGLONG)context->NextComplete + 1) * context->PacketSize) {
-        ULONGLONG qpc = (ULONGLONG)KeQueryPerformanceCounter(NULL).QuadPart;
+        ULONG completed = context->NextComplete++;
         (VOID)AcxRtStreamNotifyPacketComplete(stream,
-                                               context->NextComplete, qpc);
+                                               completed, qpc);
         SofProbeAcxRecord(context->Device, 4);
-        ++context->NextComplete;
     }
 }
 #endif

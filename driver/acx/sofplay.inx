@@ -6,7 +6,7 @@ Signature="$Windows NT$"
 Class=MEDIA
 ClassGuid={4d36e96c-e325-11ce-bfc1-08002be10318}
 Provider=%ProviderName%
-DriverVer=10/13/2026,0.1.0.0
+DriverVer=10/14/2026,0.1.1.0
 CatalogFile=sofplay.cat
 PnpLockdown=1
 

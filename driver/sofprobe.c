@@ -59,6 +59,11 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN AcxPcmNeedsReset;
     ULONG AcxPcmResets;
     ULONG AcxStartPosition;
+    ULONG AcxLastPosition;
+    ULONGLONG AcxLinearPosition;
+    ULONG AcxLatePackets;
+    ULONG AcxMaxAdvance;
+    ULONG AcxPacketBytes;
     PUCHAR AcxRing;
     ULONG AcxStartupCount;
     ULONG AcxStartupStage;
@@ -162,11 +167,56 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
     WdfSpinLockAcquire(context->AcxBufferLock);
     if (context->AcxHardwareReady && context->AcxRing != NULL) {
         RtlZeroMemory(context->AcxRing, SOFPROBE_TONE_BYTES);
+        context->AcxLastPosition = 0;
+        context->AcxLinearPosition = 0;
+        context->AcxLatePackets = 0;
+        context->AcxMaxAdvance = 0;
+        context->AcxPacketBytes = 0;
         *Bytes = SOFPROBE_TONE_BYTES;
         status = STATUS_SUCCESS;
     }
     WdfSpinLockRelease(context->AcxBufferLock);
     WdfWaitLockRelease(context->AcxPowerLock);
+    return status;
+}
+
+// AcxBufferLock serializes position tracking, clearing consumed data, and
+// publishing new packets. Clear only bytes DMA has already read: otherwise
+// an underrun replays samples left behind on the previous ring revolution.
+static NTSTATUS
+SofProbeAcxAdvanceLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
+{
+    ULONG position;
+    ULONG advance;
+    ULONG first;
+    if (!Context->AcxHardwareReady || Context->AcxRing == NULL ||
+        Context->ToneHda == NULL) return STATUS_DEVICE_NOT_READY;
+    position = READ_REGISTER_ULONG((PULONG)(Context->ToneHda + 0x164));
+    if (position >= SOFPROBE_TONE_BYTES ||
+        (READ_REGISTER_UCHAR(Context->ToneHda + 0x163) & 0x1c) != 0)
+        return STATUS_DEVICE_DATA_ERROR;
+    advance = (position + SOFPROBE_TONE_BYTES - Context->AcxLastPosition) % SOFPROBE_TONE_BYTES;
+    first = min(advance, SOFPROBE_TONE_BYTES - Context->AcxLastPosition);
+    RtlZeroMemory(Context->AcxRing + Context->AcxLastPosition, first);
+    if (advance > first) RtlZeroMemory(Context->AcxRing, advance - first);
+    KeMemoryBarrier();
+    Context->AcxLastPosition = position;
+    Context->AcxLinearPosition += advance;
+    Context->AcxMaxAdvance = max(Context->AcxMaxAdvance, advance);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+SofProbeAcxGetProgress(_In_ WDFDEVICE Device, _Out_ PULONGLONG Bytes,
+                       _Out_ PULONGLONG Qpc)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    NTSTATUS status;
+    WdfSpinLockAcquire(context->AcxBufferLock);
+    status = SofProbeAcxAdvanceLocked(context);
+    *Bytes = context->AcxLinearPosition;
+    *Qpc = (ULONGLONG)KeQueryPerformanceCounter(NULL).QuadPart;
+    WdfSpinLockRelease(context->AcxBufferLock);
     return status;
 }
 
@@ -181,7 +231,21 @@ SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
     ULONG first;
     if (Bytes == 0 || Bytes > SOFPROBE_TONE_BYTES) return STATUS_INVALID_PARAMETER;
     WdfSpinLockAcquire(context->AcxBufferLock);
-    if (context->AcxHardwareReady && context->AcxRing != NULL) {
+    status = SofProbeAcxAdvanceLocked(context);
+    if (NT_SUCCESS(status)) {
+        context->AcxPacketBytes = Bytes;
+        // Never write behind DMA: that data would be heard one full ring
+        // later. Let the Windows engine resynchronize a late submission.
+        if ((ULONGLONG)Packet * Bytes < context->AcxLinearPosition) {
+            ++context->AcxLatePackets;
+            WdfSpinLockRelease(context->AcxBufferLock);
+            return STATUS_DATA_LATE_ERROR;
+        }
+        if (((ULONGLONG)Packet + 1) * Bytes >
+            context->AcxLinearPosition + SOFPROBE_TONE_BYTES) {
+            WdfSpinLockRelease(context->AcxBufferLock);
+            return STATUS_DATA_OVERRUN;
+        }
         offset = (ULONG)(((ULONGLONG)Packet * Bytes) % SOFPROBE_TONE_BYTES);
         first = min(Bytes, SOFPROBE_TONE_BYTES - offset);
         RtlCopyMemory(context->AcxRing + offset, Source, first);
@@ -2889,13 +2953,18 @@ SofProbeEvtIoDeviceControl(
             return;
         }
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
-        acx->Version = 3;
+        acx->Version = 4;
         acx->StartupCount = context->AcxStartupCount;
         acx->StartupStage = context->AcxStartupStage;
         acx->StartupStatus = (ULONG)context->AcxStartupStatus;
         acx->HardwareReady = context->AcxHardwareReady;
         acx->PcmResets = context->AcxPcmResets;
         acx->StartPosition = context->AcxStartPosition;
+        WdfSpinLockAcquire(context->AcxBufferLock);
+        acx->LatePackets = context->AcxLatePackets;
+        acx->MaxAdvanceBytes = context->AcxMaxAdvance;
+        acx->PacketBytes = context->AcxPacketBytes;
+        WdfSpinLockRelease(context->AcxBufferLock);
 
         acx->StreamsCreated = (ULONG)InterlockedCompareExchange(
             &context->AcxStreamsCreated, 0, 0);
