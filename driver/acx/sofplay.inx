@@ -69,9 +69,9 @@ HKR,,CLSID,,%ProxyClsid%
 HKR,,FriendlyName,,%SpeakerFriendlyName%
 HKR,EP\0,%EndpointAssociation%,,%NodeTypeAny%
 HKR,EP\0,%EndpointEventDriven%,0x00010001,0x1
-; Serialized VT_BLOB with a 48 kHz, stereo, 32-bit PCM WAVEFORMATEXTENSIBLE.
+; Serialized VT_BLOB with 48 kHz stereo PCM, 24 valid bits in 32-bit slots.
 HKR,EP\0,%AudioEngineOemFormat%,0x00000001,41,00,00,00,28,00,00,00,\
- FE,FF,02,00,80,BB,00,00,00,DC,05,00,08,00,20,00,16,00,20,00,\
+ FE,FF,02,00,80,BB,00,00,00,DC,05,00,08,00,20,00,16,00,18,00,\
  03,00,00,00,01,00,00,00,00,00,10,00,80,00,00,AA,00,38,9B,71
 
 [Strings]
