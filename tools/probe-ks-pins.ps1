@@ -55,6 +55,22 @@ try {
         $errorCode = if ($ok) { 0 } else { [Runtime.InteropServices.Marshal]::GetLastWin32Error() }
         $hex = if ($returned -gt 0) { [BitConverter]::ToString($out, 0, [Math]::Min($returned, 128)) } else { '' }
         Write-Output "pin=$pinId prop=MODEDATAFORMATS mode=$($mode[0]) ok=$ok error=$errorCode bytes=$returned data=$hex"
+        $input = New-Object byte[] 80
+        [Array]::Copy($set, $input, 16)
+        [BitConverter]::GetBytes([uint32]15).CopyTo($input, 16)
+        [BitConverter]::GetBytes([uint32]1).CopyTo($input, 20)
+        [BitConverter]::GetBytes([uint32]48).CopyTo($input, 32)
+        [BitConverter]::GetBytes([uint32]1).CopyTo($input, 36)
+        [BitConverter]::GetBytes([uint32]40).CopyTo($input, 40)
+        [Guid]::Parse('e1f89eb5-5f46-419b-967b-ff6770b98401').ToByteArray().CopyTo($input, 48)
+        [Guid]::Parse($mode[1]).ToByteArray().CopyTo($input, 64)
+        $out = New-Object byte[] 256
+        $returned = 0
+        $ok = [KsProbeNative]::DeviceIoControl($handle, 0x2f0003, $input, $input.Length,
+          $out, $out.Length, [ref]$returned, [IntPtr]::Zero)
+        $errorCode = if ($ok) { 0 } else { [Runtime.InteropServices.Marshal]::GetLastWin32Error() }
+        $hex = if ($returned -gt 0) { [BitConverter]::ToString($out, 0, [Math]::Min($returned, 128)) } else { '' }
+        Write-Output "pin=$pinId prop=PROPOSEDATAFORMAT2 mode=$($mode[0]) ok=$ok error=$errorCode bytes=$returned data=$hex"
       }
       $input = New-Object byte[] (32 + $ranges.Length)
       [Array]::Copy($set, $input, 16)
