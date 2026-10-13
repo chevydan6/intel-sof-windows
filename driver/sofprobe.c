@@ -1999,7 +1999,8 @@ SofProbeToneControl(_In_ WDFREQUEST Request,
             READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c)) != 3 ||
             READ_REGISTER_USHORT((PUSHORT)(hda + 0x172)) != 0x41 ||
             READ_REGISTER_ULONG((PULONG)(hda + 0x178)) != bdlAddr.LowPart ||
-            READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) != bdlAddr.HighPart) {
+            READ_REGISTER_ULONG((PULONG)(hda + 0x17c)) !=
+                (ULONG)bdlAddr.HighPart) {
             result->Result = 3;
             goto rollback;
         }
