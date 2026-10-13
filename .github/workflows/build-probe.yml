@@ -19,3 +19,18 @@ jobs:
       - name: Build with Windows Driver Kit
         shell: pwsh
         run: msbuild driver/sofprobe.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
+      - name: Verify generated INF independently
+        shell: pwsh
+        run: |
+          $tool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Tools' -Recurse -Filter InfVerif.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Select-Object -Last 1
+          if (-not $tool) { throw 'x64 InfVerif.exe was not found in the WDK' }
+          Write-Host "Using $($tool.FullName)"
+          & $tool.FullName /w driver/x64/Debug/sofprobe.inf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sofprobe-development-package
+          path: driver/x64/Debug/sofprobe/
+          if-no-files-found: error
