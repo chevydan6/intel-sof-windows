@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// First hardware milestone: enumerate assigned PCI resources without touching
-// MMIO, DMA, firmware, interrupts, or codec registers.
+// Read a small fixed set of HDA controller registers. No device register writes,
+// DMA, firmware, interrupts, or codec access. Values are saved in the device's
+// registry key so the target can be inspected without a kernel debugger.
 
 #include <ntddk.h>
 #include <wdf.h>
@@ -8,6 +9,72 @@
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SofProbeEvtDeviceAdd;
 EVT_WDF_DEVICE_PREPARE_HARDWARE SofProbeEvtPrepareHardware;
+
+static NTSTATUS
+SofProbeSaveValue(_In_ WDFKEY Key, _In_ PCWSTR Name, _In_ ULONG Value)
+{
+    UNICODE_STRING valueName;
+
+    RtlInitUnicodeString(&valueName, Name);
+    return WdfRegistryAssignULong(Key, &valueName, Value);
+}
+
+static NTSTATUS
+SofProbeReadHdaRegisters(_In_ WDFDEVICE Device,
+                         _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR Memory)
+{
+    PUCHAR registers;
+    WDFKEY key;
+    NTSTATUS status;
+    ULONG gcap;
+    ULONG vmin;
+    ULONG vmaj;
+    ULONG gctl;
+    ULONG statests;
+    ULONG gcap2;
+    ULONG llch;
+
+    // Only the target's 16 KiB HDA BAR is accepted, not its 1 MiB DSP BAR.
+    if (Memory->u.Memory.Length != 0x4000) {
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+    registers = (PUCHAR)MmMapIoSpaceEx(Memory->u.Memory.Start, 0x40,
+                                       PAGE_READONLY | PAGE_NOCACHE);
+    if (registers == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // Offsets and widths follow Linux include/sound/hda_register.h.
+    gcap = READ_REGISTER_USHORT((PUSHORT)(registers + 0x00));
+    vmin = READ_REGISTER_UCHAR(registers + 0x02);
+    vmaj = READ_REGISTER_UCHAR(registers + 0x03);
+    gctl = READ_REGISTER_ULONG((PULONG)(registers + 0x08));
+    statests = READ_REGISTER_USHORT((PUSHORT)(registers + 0x0e));
+    gcap2 = READ_REGISTER_USHORT((PUSHORT)(registers + 0x12));
+    llch = READ_REGISTER_ULONG((PULONG)(registers + 0x14));
+    MmUnmapIoSpace(registers, 0x40);
+
+    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+               "SOFPROBE: GCAP=%04lx version=%lu.%lu GCTL=%08lx "
+               "STATESTS=%04lx GCAP2=%04lx LLCH=%08lx\n",
+               gcap, vmaj, vmin, gctl, statests, gcap2, llch));
+
+    status = WdfDeviceOpenRegistryKey(Device, PLUGPLAY_REGKEY_DEVICE,
+                                      KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES,
+                                      &key);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    status = SofProbeSaveValue(key, L"SofProbeGcap", gcap);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeVmin", vmin);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeVmaj", vmaj);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeGctl", gctl);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeStatests", statests);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeGcap2", gcap2);
+    if (NT_SUCCESS(status)) status = SofProbeSaveValue(key, L"SofProbeLlch", llch);
+    WdfRegistryClose(key);
+    return status;
+}
 
 NTSTATUS
 DriverEntry(
@@ -48,6 +115,7 @@ SofProbeEvtPrepareHardware(
 {
     ULONG index;
     ULONG count;
+    PCM_PARTIAL_RESOURCE_DESCRIPTOR hdaMemory = NULL;
 
     UNREFERENCED_PARAMETER(Device);
     UNREFERENCED_PARAMETER(ResourcesRaw);
@@ -69,6 +137,12 @@ SofProbeEvtPrepareHardware(
                        index, resource->u.Memory.Start.HighPart,
                        resource->u.Memory.Start.LowPart,
                        resource->u.Memory.Length));
+            if (resource->u.Memory.Length == 0x4000) {
+                if (hdaMemory != NULL) {
+                    return STATUS_DEVICE_CONFIGURATION_ERROR;
+                }
+                hdaMemory = resource;
+            }
             break;
         case CmResourceTypeInterrupt:
             KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
@@ -89,5 +163,8 @@ SofProbeEvtPrepareHardware(
             break;
         }
     }
-    return STATUS_SUCCESS;
+    if (hdaMemory == NULL) {
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+    return SofProbeReadHdaRegisters(Device, hdaMemory);
 }

@@ -1,0 +1,17 @@
+$ErrorActionPreference = 'Stop'
+trap { [Console]::Error.WriteLine($_.ToString()); exit 1 }
+$instance = 'PCI\VEN_8086&DEV_54C8&SUBSYS_00000000&REV_00\3&11583659&0&FB'
+$device = Get-PnpDevice -InstanceId $instance
+if ($device.Status -ne 'OK') { throw "Probe is not started: $($device.Status)" }
+$signed = Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceID -EQ $instance
+if ($signed.DriverProviderName -ne 'Open SOF Windows Project') {
+    throw 'The controller is not bound to our probe'
+}
+$key = "HKLM:\SYSTEM\CurrentControlSet\Enum\$instance"
+$values = Get-ItemProperty -LiteralPath $key
+$names = @('SofProbeGcap', 'SofProbeVmin', 'SofProbeVmaj',
+           'SofProbeGctl', 'SofProbeStatests', 'SofProbeGcap2', 'SofProbeLlch')
+foreach ($name in $names) {
+    if ($null -eq $values.$name) { throw "Missing register value: $name" }
+    '{0} = 0x{1:X8} ({1})' -f $name, [uint32]$values.$name
+}
