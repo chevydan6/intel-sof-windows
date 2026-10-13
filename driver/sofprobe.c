@@ -1890,7 +1890,12 @@ SofProbeToneControl(_In_ WDFREQUEST Request,
             else Context->ToneDmaRunning = TRUE;
         }
     } else if (Action == 2) {
+        hda = Context->ToneHda;
+        result->StreamControl = READ_REGISTER_ULONG((PULONG)(hda + 0x160));
+        result->StreamPosition = READ_REGISTER_ULONG((PULONG)(hda + 0x164));
+        result->StreamStatus = READ_REGISTER_UCHAR(hda + 0x163);
         result->Result = SofProbeStopToneHardware(Context);
+        hda = NULL;
     } else {
         status = WdfCommonBufferCreate(Context->DmaEnabler, 128,
                                        WDF_NO_OBJECT_ATTRIBUTES, &bdl);
@@ -2103,6 +2108,8 @@ SofProbeStopSessionHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
     Result->Result = Result->CleanupFlags == 0 ? 0 : 2;
     Context->SessionActive = FALSE;
     Context->SessionDsp = NULL;
+    Context->TonePcmConfigured = FALSE;
+    Context->ToneTriggerActive = FALSE;
     MmUnmapIoSpace(dsp, 0x100000);
     if (!Context->ToneDmaRunning) SofProbeFreeToneBuffers(Context);
 }
