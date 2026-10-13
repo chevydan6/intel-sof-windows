@@ -196,6 +196,54 @@ finish:
 }
 
 static VOID
+SofProbeReadStream0(_In_ WDFREQUEST Request,
+                    _In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                    _In_ size_t OutputBufferLength,
+                    _In_ size_t InputBufferLength)
+{
+    PSOFPROBE_STREAM_SNAPSHOT result;
+    PUCHAR hda;
+    ULONG streamControlAndStatus;
+    NTSTATUS status;
+
+    if (InputBufferLength != 0 || OutputBufferLength < sizeof(*result)) {
+        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result),
+                                            (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) {
+        WdfRequestComplete(Request, status);
+        return;
+    }
+    hda = (PUCHAR)MmMapIoSpaceEx(Context->HdaStart, 0x1000,
+                                PAGE_READONLY | PAGE_NOCACHE);
+    if (hda == NULL) {
+        WdfRequestComplete(Request, STATUS_INSUFFICIENT_RESOURCES);
+        return;
+    }
+    // GCAP 0x9701 reports seven input streams; output stream 0 therefore
+    // starts at 0x80 + 7 * 0x20 = 0x160 on this exact N100 controller.
+    if (READ_REGISTER_USHORT((PUSHORT)hda) != 0x9701) {
+        MmUnmapIoSpace(hda, 0x1000);
+        WdfRequestComplete(Request, STATUS_DEVICE_CONFIGURATION_ERROR);
+        return;
+    }
+    streamControlAndStatus = READ_REGISTER_ULONG((PULONG)(hda + 0x160));
+    result->Control = streamControlAndStatus & 0x00ffffff;
+    result->Status = streamControlAndStatus >> 24;
+    result->CyclicBufferLength = READ_REGISTER_ULONG((PULONG)(hda + 0x168));
+    result->LastValidIndex = READ_REGISTER_USHORT((PUSHORT)(hda + 0x16c));
+    result->Format = READ_REGISTER_USHORT((PUSHORT)(hda + 0x172));
+    result->BdlAddressLow = READ_REGISTER_ULONG((PULONG)(hda + 0x178));
+    result->BdlAddressHigh = READ_REGISTER_ULONG((PULONG)(hda + 0x17c));
+    result->ProcessingPipeControl = READ_REGISTER_ULONG((PULONG)(hda + 0x804));
+    MmUnmapIoSpace(hda, 0x1000);
+    WdfRequestSetInformation(Request, sizeof(*result));
+    WdfRequestComplete(Request, STATUS_SUCCESS);
+}
+
+static VOID
 SofProbePulseCore0(_In_ WDFREQUEST Request,
                    _In_ PSOFPROBE_DEVICE_CONTEXT Context,
                    _In_ size_t OutputBufferLength,
@@ -517,7 +565,8 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
         IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0 &&
         IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION &&
-        IoControlCode != IOCTL_SOFPROBE_STAGE_IPC3_FIRMWARE) {
+        IoControlCode != IOCTL_SOFPROBE_STAGE_IPC3_FIRMWARE &&
+        IoControlCode != IOCTL_SOFPROBE_READ_STREAM0) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
@@ -538,6 +587,11 @@ SofProbeEvtIoDeviceControl(
     if (IoControlCode == IOCTL_SOFPROBE_STAGE_IPC3_FIRMWARE) {
         SofProbeStageFirmware(Request, context, OutputBufferLength,
                               InputBufferLength);
+        return;
+    }
+    if (IoControlCode == IOCTL_SOFPROBE_READ_STREAM0) {
+        SofProbeReadStream0(Request, context, OutputBufferLength,
+                            InputBufferLength);
         return;
     }
     if (InputBufferLength != 0) {

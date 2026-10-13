@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-only
-param([switch]$PulseCore0, [switch]$TestDmaAllocation, [string]$StageFirmware)
+param([switch]$PulseCore0, [switch]$TestDmaAllocation,
+      [string]$StageFirmware, [switch]$ReadStream0)
 $ErrorActionPreference = 'Stop'
 $selected = 0
 if ($PulseCore0) { $selected++ }
 if ($TestDmaAllocation) { $selected++ }
 if ($StageFirmware) { $selected++ }
+if ($ReadStream0) { $selected++ }
 if ($selected -gt 1) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
@@ -52,7 +54,7 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } else { [uint32]0x226000 }
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } else { [uint32]0x226000 }
 $inputBytes = $null
 if ($StageFirmware) {
     $expectedHash = '8433390E4ABFE40B251FF3DEC41604E7B817501D1097D51AA2F51C11444D3BF0'
@@ -62,6 +64,18 @@ if ($StageFirmware) {
     $inputBytes = [IO.File]::ReadAllBytes($StageFirmware)
 }
 $values = [SofProbeClient]::Exchange($paths[0], $code, $inputBytes)
+if ($ReadStream0) {
+    [pscustomobject]@{
+        Control = ('0x{0:X6}' -f $values[0])
+        Status = ('0x{0:X2}' -f $values[1])
+        CyclicBufferLength = $values[2]
+        LastValidIndex = $values[3]
+        Format = ('0x{0:X4}' -f $values[4])
+        BdlAddress = ('0x{0:X8}{1:X8}' -f $values[6], $values[5])
+        ProcessingPipeControl = ('0x{0:X8}' -f $values[7])
+    } | Format-List
+    return
+}
 if ($values[0] -ne 1) { throw "Unsupported snapshot version: $($values[0])" }
 if ($TestDmaAllocation -or $StageFirmware) {
     [pscustomobject]@{
