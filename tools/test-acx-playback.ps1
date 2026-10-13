@@ -45,8 +45,15 @@ try {
     $player.Dispose()
     Start-Sleep -Milliseconds 500
     Write-Host 'Windows playback call returned.'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $client -AcxStatus
+    $status = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $client -AcxStatus | Out-String
+    Write-Host $status
     if ($LASTEXITCODE -ne 0) { throw 'ACX status read failed' }
+    foreach ($field in @('StreamsCreated', 'RunCalls', 'PacketsSubmitted', 'PacketsCompleted')) {
+        if ($status -notmatch "(?m)^$field\s*:\s*(\d+)" -or
+            [uint32]$Matches[1] -eq 0) {
+            throw "Windows playback did not reach ACX: $field is zero"
+        }
+    }
 } finally {
     if ($prepared) {
         foreach ($arguments in @(@('-StopTone'),
