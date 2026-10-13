@@ -12,7 +12,9 @@ reported the controller's assigned resources, HDA capabilities, and powered-off
 DSP status. All test packages were removed and the laptop was
 returned to normal boot settings. See the [PCI resource](docs/n100-probe-test.md),
 [HDA register](docs/n100-register-test.md), and
-[DSP status](docs/n100-dsp-status-test.md) test records. Audio still does not
+[DSP status](docs/n100-dsp-status-test.md) test records. The complete
+[capability chain](docs/n100-capability-chain-test.md) was also captured.
+Audio still does not
 work: the probe does not load firmware or expose audio streams.
 
 ## Why a host driver is needed
