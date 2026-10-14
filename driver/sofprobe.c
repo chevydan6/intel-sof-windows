@@ -5,6 +5,7 @@
 #include <ntddk.h>
 #include <wdf.h>
 #ifdef SOFPLAY_INTEGRATED
+#include <windef.h>
 #include <ks.h>
 #include <acx.h>
 #include <bcrypt.h>
