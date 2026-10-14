@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // First RT5682 bring-up: identify the codec through its ACPI I2C connection.
-// No codec configuration, DAC power, audio clock, or speaker GPIO writes.
+// Selects I2C mode, but never powers DACs, audio clocks, or speaker GPIOs.
 #include <ntddk.h>
 #include <wdf.h>
 #include <spb.h>
 #include <acpiioct.h>
 #define RESHUB_USE_HELPER_ROUTINES
 #include <reshub.h>
+#include "codec-policy.h"
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD CodecAdd;
@@ -72,7 +73,23 @@ static NTSTATUS ReadRegister(WDFDEVICE device, USHORT reg, PULONG value)
     return STATUS_SUCCESS;
 }
 
-static VOID SaveCrs(WDFDEVICE device)
+static NTSTATUS SelectI2cMode(WDFDEVICE device)
+{
+    UCHAR bytes[4] = { 0xff, 0xff, 0x00, 0x01 };
+    WDF_MEMORY_DESCRIPTOR input;
+    WDF_REQUEST_SEND_OPTIONS options;
+    ULONG_PTR transferred = 0;
+    NTSTATUS status;
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&input, bytes, sizeof(bytes));
+    WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+    WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_SEC(2));
+    status = WdfIoTargetSendWriteSynchronously(CodecContext(device)->I2c,
+        NULL, &input, NULL, &options, &transferred);
+    if (NT_SUCCESS(status) && transferred != sizeof(bytes)) return STATUS_DEVICE_DATA_ERROR;
+    return status;
+}
+
+static NTSTATUS ValidateAndSaveCrs(WDFDEVICE device)
 {
     ACPI_EVAL_INPUT_BUFFER request;
     ULONG storage[256] = {0};
@@ -83,6 +100,7 @@ static VOID SaveCrs(WDFDEVICE device)
     const ULONG prefix = FIELD_OFFSET(ACPI_EVAL_OUTPUT_BUFFER, Argument) +
         FIELD_OFFSET(ACPI_METHOD_ARGUMENT, Data);
     WDFKEY key;
+    NTSTATUS status;
     DECLARE_CONST_UNICODE_STRING(name, L"CodecCrs");
     RtlZeroMemory(&request, sizeof(request));
     request.Signature = ACPI_EVAL_INPUT_BUFFER_SIGNATURE;
@@ -91,19 +109,23 @@ static VOID SaveCrs(WDFDEVICE device)
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&out, storage, sizeof(storage));
     WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
     WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_SEC(2));
-    if (!NT_SUCCESS(WdfIoTargetSendIoctlSynchronously(WdfDeviceGetIoTarget(device),
-            NULL, IOCTL_ACPI_EVAL_METHOD, &in, &out, &options, &returned))) return;
+    status = WdfIoTargetSendIoctlSynchronously(WdfDeviceGetIoTarget(device),
+            NULL, IOCTL_ACPI_EVAL_METHOD, &in, &out, &options, &returned);
+    if (!NT_SUCCESS(status)) return status;
     if (returned < prefix || returned > sizeof(storage) ||
         output->Signature != ACPI_EVAL_OUTPUT_BUFFER_SIGNATURE ||
         output->Length < prefix || output->Length > returned || output->Count != 1 ||
         output->Argument[0].Type != ACPI_METHOD_ARGUMENT_BUFFER ||
-        output->Argument[0].DataLength > output->Length - prefix) return;
+        output->Argument[0].DataLength > output->Length - prefix)
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
     if (NT_SUCCESS(WdfDeviceOpenRegistryKey(device, PLUGPLAY_REGKEY_DEVICE,
             KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES, &key))) {
         (VOID)WdfRegistryAssignValue(key, &name, REG_BINARY,
             output->Argument[0].DataLength, output->Argument[0].Data);
         WdfRegistryClose(key);
     }
+    return CodecMatchesResource(output->Argument[0].Data, output->Argument[0].DataLength)
+        ? STATUS_SUCCESS : STATUS_DEVICE_CONFIGURATION_ERROR;
 }
 
 NTSTATUS DriverEntry(PDRIVER_OBJECT object, PUNICODE_STRING path)
@@ -134,12 +156,14 @@ NTSTATUS CodecPrepare(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST translate
 {
     CODEC_CONTEXT *c = CodecContext(device);
     ULONG i, found = 0;
+    NTSTATUS status;
     UNREFERENCED_PARAMETER(raw);
     c->Connection.QuadPart = 0;
     c->DeviceId = c->VendorId = c->VersionId = MAXULONG;
     c->Reads = 0;
     Report(device, 1, STATUS_PENDING);
-    SaveCrs(device);
+    status = ValidateAndSaveCrs(device);
+    if (!NT_SUCCESS(status)) { Report(device, 1, status); return status; }
     for (i = 0; i < WdfCmResourceListGetCount(translated); ++i) {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR r = WdfCmResourceListGetDescriptor(translated, i);
         if (r == NULL) return STATUS_DEVICE_CONFIGURATION_ERROR;
@@ -162,6 +186,7 @@ NTSTATUS CodecEnter(WDFDEVICE device, WDF_POWER_DEVICE_STATE previous)
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_IO_TARGET_OPEN_PARAMS open;
     NTSTATUS status;
+    LARGE_INTEGER delay;
     UNREFERENCED_PARAMETER(previous);
     RtlInitEmptyUnicodeString(&path, buffer, sizeof(buffer));
     status = RESOURCE_HUB_CREATE_PATH_FROM_ID(&path,
@@ -177,6 +202,14 @@ NTSTATUS CodecEnter(WDFDEVICE device, WDF_POWER_DEVICE_STATE previous)
     status = WdfIoTargetOpen(c->I2c, &open);
     if (!NT_SUCCESS(status)) goto finish;
     Report(device, 2, STATUS_PENDING);
+    // Realtek's Linux probe waits >=300 ms after supplies, selects I2C mode,
+    // then waits >=10 ms before reading DEVICE_ID. No output is enabled.
+    delay.QuadPart = -3000000;
+    (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    status = SelectI2cMode(device);
+    if (!NT_SUCCESS(status)) goto finish;
+    delay.QuadPart = -100000;
+    (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
     status = ReadRegister(device, 0x00ff, &c->DeviceId);
     if (!NT_SUCCESS(status)) goto finish;
     if (c->DeviceId != 0x6530) { status = STATUS_DEVICE_CONFIGURATION_ERROR; goto finish; }
