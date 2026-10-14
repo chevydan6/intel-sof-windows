@@ -7,9 +7,10 @@ contains diagnostic tooling and experimental ACX audio drivers.
 
 **Everyday speaker playback remains disabled after reported heating and
 distortion.** A separate, explicitly armed [right-speaker preview](docs/n100-right-speaker-preview.md)
-has played Windows application audio for a bounded two-second test, with the
-left channel silent and amplifier shutdown verified. The user confirmed clear
-sound and cool speaker areas for that test. Left-side imbalance also reproduces
+has played Windows application audio in bounded two- and eight-second tests,
+with the left channel silent and amplifier shutdown verified. The user confirmed
+clear sound and cool speaker areas for the two-second test; feedback on the
+eight-second test is pending. Left-side imbalance also reproduces
 in Fedora; its hardware cause remains unresolved. See the
 [thermal investigation](docs/n100-amplifier-thermal-review.md).
 

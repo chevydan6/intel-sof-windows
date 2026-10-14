@@ -194,4 +194,48 @@ amp driver cannot arm this preview. Neither duration nor output level is a
 caller-supplied value. The DC filter, peak ceiling, silent left channel,
 monitoring checks, explicit one-shot arm and shutdown behavior are unchanged.
 Offline tests exercise both parent durations and the new amp authorization,
-deadline, lost-heartbeat and owner-cleanup paths. Hardware validation is pending.
+deadline, lost-heartbeat and owner-cleanup paths.
+
+Source `3367a61` passed all four applicable CI workflows, including both preview
+variants and the amplifier driver. The amplifier package installed as oem61.inf
+13.40.35.108; the old oem53.inf package was exported before replacement.
+Hardware preflight verified the extended capability while off and rejected
+user-mode START, START_LISTEN, START_PREVIEW and RENEW with no amplifier enables.
+
+The first extended dry run passed: Deadline stop at 8008 ms, 251 monitoring
+checks, 53 boundary reads, no preview errors or late packets, and zero amplifier
+enables/faults. Its captured rings contained 6,240 nonzero right samples, zero
+nonzero left samples, and a right peak of 400,152,003 below the fixed ceiling.
+
+One powered run then passed with Deadline stop at 8022 ms, 250 monitoring checks,
+53 boundary reads, no preview errors or late packets, exactly one amplifier
+enable, zero watchdog trips/faults, and verified off afterward. Its captured
+rings contained 4,656 nonzero right samples, zero nonzero left samples, and a
+right peak of 361,028,386. The cutoff is serviced by a passive software timer;
+the measured 22 ms excess is reported rather than rounded to an exact 8000 ms.
+The separate amplifier absolute ceiling remains 8200 ms from its enable.
+
+The 21.696-second Ubuntu recording contains an eight-second waveform match at
+about 7.488 seconds (normalized correlation 0.351). Neither microphone channel
+clipped after its startup interval. This is evidence of the melody reaching the
+speaker, not proof of distortion-free reproduction or safe temperature. User
+feedback on clarity and temperature after the longer test is pending. All raw
+recordings and machine-specific evidence remain private under ignored
+`build/speaker-repair/preview-long-3367a61/`.
+
+## Headphone validation status
+
+The corrected headphone artifact from `4b0304c` installed as oem60.inf,
+13.28.13.565. Its application transport started, but audible validation could
+not proceed: while the stream was requested, the codec reported Playing=0,
+JackPresent=0 and 16 jack polls, with success status and hardware mutes asserted.
+The driver is waiting for jack detection; this is not evidence of a new playback
+regression. The test now reports that condition explicitly before cleanup.
+The user has been asked to connect headphones. Full two-cycle playback validation
+remains pending and must not be reported as passed.
+
+After the extended speaker test, the machine was returned to that corrected
+headphone-only package with both Windows audio services running. The amplifier
+remained off with no faults. The eight-second preview is available as a separate
+test artifact, not left active for ordinary applications. No Windows reboot
+occurred during this investigation; the recorded boot time remained 21:53:11.
