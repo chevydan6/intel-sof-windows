@@ -64,6 +64,12 @@ typedef struct {
 } CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 typedef CONTEXT *WDFDEVICE;
 #define SofProbeGetContext(d) (d)
+#ifdef SOFPLAY_HEADPHONE
+#define WdfPowerDeviceD0 1
+static NTSTATUS SofPlayStartPlaybackHardware(CONTEXT *c, int previous) {
+    (void)c; (void)previous; return STATUS_DEVICE_NOT_READY;
+}
+#endif
 static NTSTATUS SofPlayRearmPcmLocked(CONTEXT *c) {
     (void)c;
     assert(!"Hardware rearm is outside this offline test");
@@ -81,7 +87,11 @@ int main(void) {
     _Alignas(8) UCHAR registers[0x200] = {0};
     UCHAR ring[SOFPROBE_TONE_BYTES] = {0};
     UCHAR packet[3840];
+#ifdef SOFPLAY_HEADPHONE
+    int32_t scaled = 0x5a5a5a5a / 4096;
+#else
     int32_t scaled = SofPlayAttenuateSpeakerSample(0x5a5a5a5a);
+#endif
     UCHAR expected[4]; memcpy(expected,&scaled,4);
     assert(SofPlayAttenuateSpeakerSample(INT32_MIN)==-761921536);
     assert(SofPlayAttenuateSpeakerSample(INT32_MAX)==761921535);
@@ -187,7 +197,10 @@ with tempfile.TemporaryDirectory(prefix='sofplay-ring-') as directory:
     path = pathlib.Path(directory)
     header = (root / 'driver/acx/sofplay-samples.h').read_text().replace('#pragma once', '')
     (path / 'test.c').write_text(shim + header + prepare + advance + copy + write + tests)
-    subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                    '-fsanitize=address,undefined', '-g', str(path / 'test.c'),
-                    '-o', str(path / 'test')], check=True)
-    subprocess.run([str(path / 'test')], check=True)
+    for mode in ('speaker', 'headphone'):
+        flags = ['-DSOFPLAY_HEADPHONE=1'] if mode == 'headphone' else []
+        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                        '-fsanitize=address,undefined', '-g', *flags, str(path / 'test.c'),
+                        '-o', str(path / 'test')], check=True)
+        subprocess.run([str(path / 'test')], check=True)
+        print(f'Validated production ring in {mode} build')

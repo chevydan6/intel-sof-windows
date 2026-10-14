@@ -94,8 +94,12 @@ static const GUID SofPlayAudioCategory =
     { 0x6994ad04, 0x93ef, 0x11d0,
       { 0xa3, 0xcc, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96 } };
 static const GUID SofPlaySpeakerNode =
+#ifdef SOFPLAY_HEADPHONE
+    { STATICGUIDOF(KSNODETYPE_HEADPHONES) };
+#else
     { 0xdff21ce1, 0xf70f, 0x11d0,
       { 0xb9, 0x17, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96 } };
+#endif
 static const GUID SofPlayDefaultMode =
     { 0xc18e2f7e, 0x933d, 0x4965,
       { 0xb7, 0xd1, 0x1e, 0xef, 0x22, 0x8d, 0x2a, 0xf3 } };
@@ -165,11 +169,7 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACX_PIN_CONFIG_INIT(&pinConfig);
     pinConfig.Type = AcxPinTypeSource;
     pinConfig.Communication = AcxPinCommunicationNone;
-#ifdef SOFPLAY_HEADPHONE
-    pinConfig.Category = &KSNODETYPE_HEADPHONES;
-#else
     pinConfig.Category = &SofPlaySpeakerNode;
-#endif
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = circuit;
     status = AcxPinCreate(circuit, &attributes, &pinConfig, &pins[1]);
