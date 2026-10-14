@@ -32,7 +32,9 @@ try {
  $player.Stop()
  $state=& (Join-Path $PSScriptRoot 'right-speaker-preview.ps1')
  $state | ConvertTo-Json | Set-Content ($OutputPrefix+'.state.json')
- & (Join-Path $PSScriptRoot 'right-speaker-preview.ps1') -Diagnostics | ConvertTo-Json | Set-Content ($OutputPrefix+'.diagnostics.json')
+ $diagnostics=& (Join-Path $PSScriptRoot 'right-speaker-preview.ps1') -Diagnostics
+ $diagnostics | ConvertTo-Json | Set-Content ($OutputPrefix+'.diagnostics.json')
+ if($diagnostics.Reason-ne 'Deadline' -or $diagnostics.ElapsedMs-lt $armed.MaximumMs -or $diagnostics.ElapsedMs-gt ($armed.MaximumMs+80)){throw 'Preview did not run to its intended deadline within the callback allowance'}
  if($state.Phase-ne 4 -or $state.Powered-ne [bool]$Powered -or $state.Error-ne '0x00000000'){throw 'Preview did not finish successfully as requested'}
  & (Join-Path $PSScriptRoot 'read-live-snapshot.ps1') -AcxStatus | Out-String | Set-Content ($OutputPrefix+'.acx.txt')
 } finally {

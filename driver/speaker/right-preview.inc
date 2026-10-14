@@ -2,7 +2,10 @@
 // AcxPowerLock serializes all amp calls and preview state. The separate
 // passive, non-periodic timer never performs GPIO I/O from the packet DPC.
 static ULONGLONG SofRightNow(VOID) { return KeQueryInterruptTime() / 10000; }
-#ifdef SOFPLAY_RIGHT_PREVIEW_LONG
+#if defined(SOFPLAY_RIGHT_PREVIEW_30)
+#define SOF_RIGHT_AMP_QUERY IOCTL_SOFAMP_QUERY_PREVIEW_30
+#define SOF_RIGHT_AMP_START IOCTL_SOFAMP_START_PREVIEW_30
+#elif defined(SOFPLAY_RIGHT_PREVIEW_LONG)
 #define SOF_RIGHT_AMP_QUERY IOCTL_SOFAMP_QUERY_PREVIEW
 #define SOF_RIGHT_AMP_START IOCTL_SOFAMP_START_PREVIEW
 #else
@@ -16,7 +19,8 @@ static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
     WDF_MEMORY_DESCRIPTOR buffer;
     WDF_REQUEST_SEND_OPTIONS options;
     ULONG_PTR returned = 0;
-    ULONG maximumMs = (code == IOCTL_SOFAMP_QUERY_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW) ? 8200 : 2200;
+    ULONG maximumMs = (code == IOCTL_SOFAMP_QUERY_PREVIEW_30 || code == IOCTL_SOFAMP_START_PREVIEW_30)
+        ? 30200 : (code == IOCTL_SOFAMP_QUERY_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW) ? 8200 : 2200;
     NTSTATUS status;
     if (c->PreviewAmp == NULL) return STATUS_DEVICE_NOT_READY;
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&buffer, &out, sizeof(out));
@@ -29,12 +33,14 @@ static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
         out.Faulted || out.FaultStatus || out.CleanupStatus ||
         out.LeaseMs != 100 || out.MaximumMs != maximumMs)
         return STATUS_DEVICE_DATA_ERROR;
-    if (code == IOCTL_SOFAMP_START_LISTEN || code == IOCTL_SOFAMP_START_PREVIEW || code == IOCTL_SOFAMP_RENEW) {
+    if (code == IOCTL_SOFAMP_START_LISTEN || code == IOCTL_SOFAMP_START_PREVIEW ||
+        code == IOCTL_SOFAMP_START_PREVIEW_30 || code == IOCTL_SOFAMP_RENEW) {
         if (!out.Active || out.OutputRequest != 2 || out.OnWrites != c->PreviewOnWrites + 1)
             return STATUS_DEVICE_DATA_ERROR;
     } else if (out.Active || out.OutputRequest != 1) return STATUS_DEVICE_DATA_ERROR;
     c->PreviewAmpWrites = out.OnWrites;
-    if (code == IOCTL_SOFAMP_QUERY || code == IOCTL_SOFAMP_QUERY_PREVIEW) c->PreviewOnWrites = out.OnWrites;
+    if (code == IOCTL_SOFAMP_QUERY || code == IOCTL_SOFAMP_QUERY_PREVIEW ||
+        code == IOCTL_SOFAMP_QUERY_PREVIEW_30) c->PreviewOnWrites = out.OnWrites;
     return STATUS_SUCCESS;
 }
 

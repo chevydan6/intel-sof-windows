@@ -26,7 +26,7 @@ if($Arm) {
  $inputBytes=[BitConverter]::GetBytes([uint32][bool]$Powered)
 }
 $v=[SofProbeClient]::Exchange($paths[0],$code,$inputBytes)
-if($v.Length-ne 6 -or $v[0]-ne 1 -or $v[1]-gt 4 -or $v[5]-notin @(2000,8000)) {
+if($v.Length-ne 6 -or $v[0]-ne 1 -or $v[1]-gt 4 -or $v[5]-notin @(2000,8000,30000)) {
  throw 'Unexpected right-speaker preview ABI'
 }
 [pscustomobject]@{Version=$v[0];Phase=$v[1];State=@('Unarmed','Armed','WaitingForDma','Active','Finished')[$v[1]];

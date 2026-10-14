@@ -29,6 +29,7 @@
       <AdditionalIncludeDirectories>$(DDK_INC_PATH)\acx\km\$(ACX_VERSION_MAJOR).$(ACX_VERSION_MINOR);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>SOFPLAY_INTEGRATED=1;ACX_VERSION_MAJOR=1;ACX_VERSION_MINOR=1;KMDF_VERSION_MAJOR=1;KMDF_VERSION_MINOR=31;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(RightPreview)' == 'true'">SOFPLAY_RIGHT_PREVIEW=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(RightPreview30)' == 'true'">SOFPLAY_RIGHT_PREVIEW=1;SOFPLAY_RIGHT_PREVIEW_30=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(RightPreviewLong)' == 'true'">SOFPLAY_RIGHT_PREVIEW=1;SOFPLAY_RIGHT_PREVIEW_LONG=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>

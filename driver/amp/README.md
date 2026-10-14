@@ -26,6 +26,9 @@ the parent still holds SSP1 speaker playback. Headphones use their separate path
   for a two-second parent-controlled listening test. The 100 ms heartbeat,
   ownership and latched-fault rules still apply; ordinary START stays 250 ms.
   Status version 2 reports the supported listening maximum in MaximumMs.
+- START_PREVIEW_30 and QUERY_PREVIEW_30 add a distinct 30200 ms cap for
+  a thirty-second application test, retaining the 100 ms lease. Earlier commands
+  keep their existing limits. This mode does not permit continuous playback.
 - A separate kernel-only START_PREVIEW command supports an 8200 ms absolute
   ceiling for an eight-second application test. QUERY_PREVIEW advertises this
   capability while off; older drivers reject it before the parent can arm.

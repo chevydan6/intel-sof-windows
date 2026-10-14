@@ -9,8 +9,7 @@ contains diagnostic tooling and experimental ACX audio drivers.
 distortion.** A separate, explicitly armed [right-speaker preview](docs/n100-right-speaker-preview.md)
 has played Windows application audio in bounded two- and eight-second tests,
 with the left channel silent and amplifier shutdown verified. The user confirmed
-clear sound and cool speaker areas for the two-second test; feedback on the
-eight-second test is pending. Left-side imbalance also reproduces
+clear sound and cool speaker areas for both tests. Left-side imbalance also reproduces
 in Fedora; its hardware cause remains unresolved. See the
 [thermal investigation](docs/n100-amplifier-thermal-review.md).
 

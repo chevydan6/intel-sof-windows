@@ -17,13 +17,13 @@ $registered=$false
 try {
  $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
  $principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
- $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 30) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+ $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 60) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
  Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Settings $settings | Out-Null
  $registered=$true
  $started=Get-Date
  Start-ScheduledTask -TaskName $task
  $finished=$false
- for($i=0;$i-lt 60;$i++) {
+ for($i=0;$i-lt 120;$i++) {
   Start-Sleep -Milliseconds 500
   $info=Get-ScheduledTaskInfo -TaskName $task
   if($info.LastRunTime-ge $started.AddSeconds(-1) -and (Get-ScheduledTask -TaskName $task).State-ne 'Running' -and $info.LastTaskResult-ne 267009){$finished=$true;break}

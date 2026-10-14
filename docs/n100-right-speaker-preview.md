@@ -219,7 +219,7 @@ The 21.696-second Ubuntu recording contains an eight-second waveform match at
 about 7.488 seconds (normalized correlation 0.351). Neither microphone channel
 clipped after its startup interval. This is evidence of the melody reaching the
 speaker, not proof of distortion-free reproduction or safe temperature. User
-feedback on clarity and temperature after the longer test is pending. All raw
+confirmed clear sound and cool speaker areas after the eight-second test. All raw
 recordings and machine-specific evidence remain private under ignored
 `build/speaker-repair/preview-long-3367a61/`.
 
@@ -239,3 +239,18 @@ headphone-only package with both Windows audio services running. The amplifier
 remained off with no faults. The eight-second preview is available as a separate
 test artifact, not left active for ordinary applications. No Windows reboot
 occurred during this investigation; the recorded boot time remained 21:53:11.
+
+## Thirty-second preview implementation
+
+A separate `RightPreview30=true` build adds a fixed 30000 ms parent deadline.
+It queries QUERY_PREVIEW_30 before arming and uses kernel-only START_PREVIEW_30;
+those commands advertise a 30200 ms amplifier ceiling with the same 100 ms
+renewal lease. Two- and eight-second builds and amplifier commands keep their
+existing limits. The left slot stays zero and the gain, DC filter, callback-gap
+check, fault latch, and one-arm-per-device-start policy are unchanged.
+
+The desktop test has a bounded 60-second task limit to allow setup, thirty
+seconds of playback and shutdown. It now requires the recorded stop reason to
+be the deadline, so an early pause cannot masquerade as a full-duration pass.
+The new mode requires a dry hardware run before a recorded powered run.
+Hardware validation of this mode is pending.

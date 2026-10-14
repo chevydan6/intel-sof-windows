@@ -64,6 +64,8 @@ jobs:
             property: RightPreview
           - artifact: sofplay-right-preview-long-package
             property: RightPreviewLong
+          - artifact: sofplay-right-preview-30-package
+            property: RightPreview30
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4

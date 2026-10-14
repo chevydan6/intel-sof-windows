@@ -48,6 +48,8 @@ typedef void VOID;
 #define IOCTL_SOFAMP_START_PREVIEW 4
 #define IOCTL_SOFAMP_QUERY_PREVIEW 5
 #define IOCTL_SOFAMP_QUERY 6
+#define IOCTL_SOFAMP_START_PREVIEW_30 7
+#define IOCTL_SOFAMP_QUERY_PREVIEW_30 8
 /* PREVIEW_AMP_MODES */
 #define WDF_REL_TIMEOUT_IN_MS(x) (x)
 #define RtlCopyMemory memcpy
@@ -193,9 +195,9 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory(prefix='sof-right-preview-') as td:
     p = Path(td)
-    modes=source[source.index('#ifdef SOFPLAY_RIGHT_PREVIEW_LONG'):source.index('#endif')+6]
+    modes=source[source.index('#if defined(SOFPLAY_RIGHT_PREVIEW_30)'):source.index('#endif')+6]
     (p/'test.c').write_text(c.replace('/* PREVIEW_AMP_MODES */',modes))
-    for flags in ([], ['-DSOFPLAY_RIGHT_PREVIEW_LONG=1']):
+    for flags in ([], ['-DSOFPLAY_RIGHT_PREVIEW_LONG=1'], ['-DSOFPLAY_RIGHT_PREVIEW_30=1']):
       subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',*flags,
                     '-fsanitize=address,undefined','-fno-omit-frame-pointer',
                     '-I',str(root/'driver/speaker'),str(p/'test.c'),'-o',str(p/'test')],check=True)
