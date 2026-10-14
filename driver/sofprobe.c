@@ -3009,6 +3009,12 @@ SofProbeEvtIoDeviceControl(
         return;
     }
     // Explicit fixed speaker check; the normal endpoint remains headphones.
+    if (IoControlCode == IOCTL_SOFPROBE_SPEAKER_EXTENDED_LEFT ||
+        IoControlCode == IOCTL_SOFPROBE_SPEAKER_EXTENDED_RIGHT) {
+        SofMicCapture(device, Request, InputBufferLength, OutputBufferLength,
+            IoControlCode == IOCTL_SOFPROBE_SPEAKER_EXTENDED_LEFT ? 5 : 6);
+        return;
+    }
     if (IoControlCode >= IOCTL_SOFPROBE_SPEAKER_DRY_LEFT &&
         IoControlCode <= IOCTL_SOFPROBE_SPEAKER_PULSE_RIGHT &&
         (IoControlCode - IOCTL_SOFPROBE_SPEAKER_DRY_LEFT) % 4 == 0) {

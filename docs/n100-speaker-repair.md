@@ -21,8 +21,9 @@ software deadlines, not physical voltage, temperature or independent cutoff.
 
 ## Fixed speaker diagnostic
 
-The headphone driver's explicit diagnostic IOCTLs select only four modes:
-left/right with the amp kept off, or left/right with one short quiet pulse.
+The headphone driver's explicit diagnostic IOCTLs select six modes:
+left/right with the amp kept off, with a 40 ms pulse, or with an explicit
+120 ms quiet pulse.
 Normal app playback remains headphone-only. Neither boot nor microphone-only
 capture starts a speaker test. The diagnostic requires a fresh idle DSP session
 with no claimed Windows stream, no previous playback run and no previous mic
@@ -31,7 +32,7 @@ or speaker test. A verified parent restart is required afterward.
 It mutes the headphone codec, releases its idle PCM, and builds a separate SSP1
 S32 graph using IDs 20/22/24/25, distinct from the DMIC graph. The fixed format
 matches the topology: 48 kHz, I2S, 3.072 MHz BCLK, stereo 32-bit slots and
-19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -15.10 dBFS peak;
+19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -18.06 dBFS peak;
 the other channel is exactly zero. The ring holds an exact integer number of
 cycles. No arbitrary frequency, sample data, amplitude or enable duration is
 accepted from applications.
@@ -40,15 +41,17 @@ The built-in microphones record five seconds. After one second of capture,
 the test checks output DMA progress and errors. Dry modes keep EN low throughout.
 Pulse modes request a kernel-owned amp lease, then explicitly request off after
 40 ms measured from before the enable call (including its 5 ms setup delay).
-There is no renewal. The amp's separate 100 ms watchdog backs up the caller's
-shutdown. Transfer/scheduling delays mean neither time is an electrical guarantee.
+The explicit 120 ms modes renew the 100 ms lease at 40 ms intervals until
+the fixed stop target; they cannot extend the amplifier's 250 ms absolute
+per-start ceiling. The amp's separate watchdog backs up the caller's shutdown. Transfer/scheduling delays mean neither time is an electrical guarantee.
 Cleanup requests amp off before IPC/DMA waits, closes the ownership handle,
 stops capture/output and retains buffers on ambiguous DMA cleanup.
 
 The response uses the existing bounded microphone result storage with version 2.
-The last header word contains mode 1..4 plus flags: `0x800` host ring contents
+The last header word contains mode 1..6 plus flags: `0x800` host ring contents
 verified immediately before enable, `0x400` output DMA advanced,
-`0x100` enable accepted, `0x200` explicit stop accepted. The general ACX status
+`0x100` enable accepted, `0x200` explicit stop accepted, and `0x1000` lease
+renewed for an extended pulse. The general ACX status
 clears HeadphoneOnly/ThermalHold after a speaker test is attempted, so diagnostics
 do not falsely report an unchanged speaker hold while this explicit path runs.
 A verified DSP reset clears the diagnostic state.
@@ -376,3 +379,31 @@ short diagnostics use the guarded amplifier client. Do not remove the hold to
 restore music playback: any future normal speaker route requires verified
 amplifier lifecycle integration as well as thermal and audible validation.
 No new speaker pulse or driver installation occurred during this review.
+
+
+## Fixed longer quiet diagnostic
+
+The clock consistency correction `d103f2f` passed Windows builds and INF checks
+for ACX (38545547340), headphones (38545547515), the guarded amplifier
+(38545547370), and the standalone probe (38545547353). It did not lift the
+ordinary speaker playback hold or change the installed package during review.
+
+To make a bounded test easier to hear after repeated cool-speaker observations,
+new explicit modes 5/6 request a single nominal 120 ms left/right pulse. Both
+short and extended diagnostics return to the lower -18.06 dBFS level. The
+extended IOCTLs are `0x22A07C` and `0x22A080`; the script requires both `-Pulse`
+and `-Extended`, records the requested duration and verifies the renewal flag.
+No caller-supplied level, waveform, duration, or continuous output is accepted.
+
+The parent checks the fixed sample ring before every renewal, renews no more
+frequently than 40 ms, and checks the 120 ms stop condition before considering
+a renewal. Failed renewal, corrupted samples, capture cancellation, DMA error
+or an excessive polling gap take the existing amplifier-first cleanup path.
+The independent amplifier retains its 100 ms lease and 250 ms maximum per-start
+interval. These remain software deadlines, not measured electrical cutoff.
+
+Host tests exercise both durations and channels, renewal failure, corrupted
+samples during an extended pulse, late callbacks stopping without renewal,
+and shutdown ordering. Existing amplifier lease/absolute-limit/ownership tests
+and microphone cleanup tests pass. Hardware validation starts with an
+amplifier-off run; an extended powered result is not yet available.

@@ -8,7 +8,7 @@ typedef struct {
     WDFIOTARGET Amp;
     BOOLEAN Configured, Triggered, Checked, Pulsed, Stopped;
     ULONG Mode, InitialOnWrites, InitialPosition;
-    ULONGLONG PulseStart;
+    ULONGLONG PulseStart, PulseRenew;
     const LONG *Samples;
     ULONG PositionOffset;
     BOOLEAN PositionReady;
@@ -75,7 +75,7 @@ SofSpeakerAmpCommand(SOFSPEAKER_CHECK *test, ULONG code, SOFAMP_STATUS *out)
         out->Faulted || out->FaultStatus || out->CleanupStatus ||
         out->LeaseMs != 100 || out->MaximumMs != 250)
         return STATUS_DEVICE_DATA_ERROR;
-    if (code == IOCTL_SOFAMP_START) {
+    if (code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_RENEW) {
         if (!out->Active || out->OutputRequest != 2 ||
             out->OnWrites != test->InitialOnWrites + 1)
             return STATUS_DEVICE_DATA_ERROR;
@@ -133,7 +133,7 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
     PUCHAR ring;
     ULONG i;
     NTSTATUS status;
-    if (test->Mode < 1 || test->Mode > 4 || c->SpeakerTestAttempted ||
+    if (test->Mode < 1 || test->Mode > 6 || c->SpeakerTestAttempted ||
         c->ToneDmaRunning || c->ToneTriggerActive || !c->TonePcmConfigured ||
         c->AcxRunCalls || InterlockedCompareExchange(&c->AcxStreamClaimed,0,0))
         return STATUS_INVALID_DEVICE_STATE;
@@ -210,16 +210,30 @@ SofSpeakerTick(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTU
         SofSpeakerSnapshot(c, test, pos, result->Bytes);
         if (test->Mode >= 3) {
             test->PulseStart = KeQueryInterruptTime();
+            test->PulseRenew = test->PulseStart;
             status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_START, &state);
             if (!NT_SUCCESS(status)) { result->Command = IOCTL_SOFAMP_START; return status; }
             test->Pulsed = TRUE; result->Reserved |= 0x100;
         }
     }
     now = KeQueryInterruptTime();
-    if (test->Pulsed && !test->Stopped && now - test->PulseStart >= 400000) {
+    if (test->Pulsed && !test->Stopped &&
+        now - test->PulseStart >= (test->Mode >= 5 ? 1200000ULL : 400000ULL)) {
         status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_STOP, &state);
         if (!NT_SUCCESS(status)) { result->Command = IOCTL_SOFAMP_STOP; return status; }
         test->Stopped = TRUE; result->Reserved |= 0x200;
+    } else if (test->Pulsed && !test->Stopped && test->Mode >= 5 &&
+               now - test->PulseRenew >= 400000) {
+        // The amplifier retains its independent 100 ms lease and 250 ms
+        // absolute per-start ceiling. Renew only this explicit fixed test;
+        // a late callback must stop above, never extend the 120 ms target.
+        KeMemoryBarrier();
+        if (!SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8,
+                                       (test->Mode - 1) & 1))
+            return STATUS_DEVICE_DATA_ERROR;
+        status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_RENEW, &state);
+        if (!NT_SUCCESS(status)) { result->Command = IOCTL_SOFAMP_RENEW; return status; }
+        test->PulseRenew = now; result->Reserved |= 0x1000;
     }
     if (result->Bytes >= 4 * 48000UL * 8 && c->SpeakerSnapshot.SecondCapturedBytes == 0) {
         c->SpeakerSnapshot.SecondCapturedBytes = result->Bytes;

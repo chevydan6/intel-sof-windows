@@ -54,6 +54,7 @@ typedef uint32_t *PULONG;typedef struct {int64_t QuadPart;} LARGE_INTEGER;
 #define SOFPROBE_TONE_BYTES 49152
 #define IOCTL_SOFAMP_START 1
 #define IOCTL_SOFAMP_STOP 2
+#define IOCTL_SOFAMP_RENEW 3
 #define READ_REGISTER_UCHAR(p) (*(p))
 #define READ_REGISTER_ULONG(p) (*(p))
 #define WRITE_REGISTER_UCHAR(p,v) (*(p)=(v))
@@ -66,11 +67,12 @@ typedef struct {ULONG OnWrites;} SOFAMP_STATUS;
 #include "speaker-test-samples.h"
 '''+struct+r'''
 static ULONGLONG now;
-static int starts,stops,closed,ipcs,failStart,failStop,sequence,offOrder,ipcOrder;
+static int starts,stops,renews,closed,ipcs,failStart,failStop,failRenew,sequence,offOrder,ipcOrder;
 static ULONGLONG KeQueryInterruptTime(void){return now;}
 static NTSTATUS SofSpeakerAmpCommand(SOFSPEAKER_CHECK *t,ULONG code,SOFAMP_STATUS *out){
  memset(out,0,sizeof(*out));
  if(code==IOCTL_SOFAMP_START){starts++;out->OnWrites=t->InitialOnWrites+1;return failStart ? -1 : 0;}
+ if(code==IOCTL_SOFAMP_RENEW){renews++;out->OnWrites=t->InitialOnWrites+1;return failRenew ? -1 : 0;}
  stops++;offOrder=++sequence;out->OnWrites=t->InitialOnWrites+(t->Pulsed?1:0);return failStop ? -1 : 0;
 }
 static NTSTATUS SofMicIpc(CONTEXT *c,const ULONG *words,CAPTURE *r){(void)c;(void)r;assert(words[2]==20);ipcs++;ipcOrder=++sequence;return 0;}
@@ -84,11 +86,11 @@ int main(void){
   int64_t sum=0;
   SofSpeakerFillTestSamples(pcm,6144,ch);
   for(ULONG i=0;i<6144;i++){
-   assert(pcm[2*i+1-ch]==0);assert(llabs(pcm[2*i+ch])<=377487360);
+   assert(pcm[2*i+1-ch]==0);assert(llabs(pcm[2*i+ch])<=268435456);
    assert(pcm[2*i+ch]==pcm[2*(i%48)+ch]);sum+=pcm[2*i+ch];
   }
   assert(sum==0);
-  assert(pcm[24+ch]==377487360 && pcm[72+ch]==-377487360);
+  assert(pcm[24+ch]==268435456 && pcm[72+ch]==-268435456);
   assert(SofSpeakerTestSamplesValid(pcm,6144,ch));
   pcm[6143*2+1-ch]=1;
   assert(!SofSpeakerTestSamplesValid(pcm,6144,ch));
@@ -101,16 +103,25 @@ int main(void){
  ULONG offsets[8]={0x00,0x04,0x08,0x2c,0x30,0x40,0x44,0x48};
  for(ULONG i=0;i<8;i++) *(PULONG)(dsp+0x11000+offsets[i])=0x100+i;
  *(PULONG)(registers+0x164)=384;
- for(ULONG mode=0;mode<=4;mode++){
+ for(ULONG mode=0;mode<=6;mode++){
   SofSpeakerFillTestSamples(pcm,6144,(mode-1)&1);
   SOFSPEAKER_CHECK t={.Mode=mode,.Amp=&ctx,.InitialOnWrites=3,.Samples=pcm};CAPTURE r={0};
-  starts=stops=0;now=10000000;
+  starts=stops=renews=0;now=10000000;
   r.Bytes=48000*8-8;assert(SofSpeakerTick(&ctx,&t,&r)==0 && !starts);
   r.Bytes=48000*8;assert(SofSpeakerTick(&ctx,&t,&r)==0);
   if(mode>=3){
    assert(starts==1 && t.Pulsed && (r.Reserved&0x500)==0x500);
    now+=399999;assert(SofSpeakerTick(&ctx,&t,&r)==0 && stops==0);
-   now++;assert(SofSpeakerTick(&ctx,&t,&r)==0 && stops==1 && (r.Reserved&0x200));
+   now++;
+   if(mode>=5){
+    assert(SofSpeakerTick(&ctx,&t,&r)==0 && stops==0 && renews==1);
+    now+=400000;assert(SofSpeakerTick(&ctx,&t,&r)==0 && renews==2 && stops==0);
+    now+=399999;assert(SofSpeakerTick(&ctx,&t,&r)==0 && renews==2 && stops==0);
+    now++;
+   }
+   assert(SofSpeakerTick(&ctx,&t,&r)==0 && stops==1 && (r.Reserved&0x200));
+   assert(renews==(mode>=5 ? 2 : 0));
+   assert(!!(r.Reserved&0x1000)==(mode>=5));
    now+=1000000;assert(SofSpeakerTick(&ctx,&t,&r)==0 && starts==1 && stops==1);
   }else assert(starts==0 && stops==0);
   if(mode){
@@ -133,6 +144,23 @@ int main(void){
   assert((stop==0)==!failStop && stops==1 && closed==1 && ipcs==1);
   assert(offOrder<ipcOrder && !t.Amp && !ctx.ToneDmaRunning);
  }
+ // Renewal failure/corruption shuts down through the existing cleanup path.
+ for(int fault=0;fault<2;fault++){
+  failStart=failStop=0;failRenew=fault==0;starts=stops=renews=closed=ipcs=sequence=0;now=10000000;
+  SofSpeakerFillTestSamples(pcm,6144,0);
+  SOFSPEAKER_CHECK t={.Mode=5,.Amp=&ctx,.Configured=1,.Triggered=1,.Samples=pcm};CAPTURE r={.Bytes=48000*8};
+  assert(SofSpeakerTick(&ctx,&t,&r)==0 && starts==1);
+  if(fault==1)pcm[0]=1;
+  now+=400000;assert(SofSpeakerTick(&ctx,&t,&r)!=0);
+  assert(renews==(fault==0));
+  assert(SofSpeakerStopOutput(&ctx,&t,&r)==0 && stops==1 && offOrder<ipcOrder);
+ }
+ // A callback already past the duration stops without renewing, even in long mode.
+ failRenew=0;starts=stops=renews=0;now=10000000;
+ SofSpeakerFillTestSamples(pcm,6144,1);
+ SOFSPEAKER_CHECK late={.Mode=6,.Amp=&ctx,.Samples=pcm};CAPTURE lateResult={.Bytes=48000*8};
+ assert(SofSpeakerTick(&ctx,&late,&lateResult)==0 && starts==1);
+ now+=1500000;assert(SofSpeakerTick(&ctx,&late,&lateResult)==0 && stops==1 && renews==0);
  // A corrupted/cleared ring must never reach amplifier enable.
  failStart=failStop=0;starts=0;memset(pcm,0,sizeof(pcm));
  SOFSPEAKER_CHECK bad={.Mode=3,.Amp=&ctx,.Samples=pcm};CAPTURE badResult={.Bytes=48000*8};
