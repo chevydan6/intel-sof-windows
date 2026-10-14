@@ -575,3 +575,28 @@ No Linux boot or additional powered playback occurred. Asked whether the Fedora
 USB is available: a same-level left/right comparison with its existing driver
 will help distinguish a Windows-specific issue from a persistent hardware or
 acoustic imbalance. Windows amplifier remains off and headphones restored.
+
+
+The user supplied the USB and authorized replacing it with a Fedora boot drive.
+The existing Windows installer files were backed up locally and checked by a
+checksum comparison before writing. Fedora LXQt Live 44-1.7 was verified
+against its signed checksum, written to the identified removable drive, and
+fully compared before adding a separate SOF_TESTS FAT32 partition. Original
+Fedora partition payloads matched after the GPT extension; the embedded media
+checksum was then refreshed and its media check passed.
+
+SOF_TESTS contains matching audio files, a README and START-SSH.sh. The helper
+requires a Fedora live boot, installs the Ubuntu laptop's public key for
+liveuser, disables password/root SSH login, starts SSH, opens its runtime
+firewall service and prints the address. It never starts a speaker test.
+The private key stays on Ubuntu; neither keys nor recordings were committed.
+
+A QEMU/OVMF test booted the actual USB using a temporary disk overlay, passed
+the default rd.live.check media test, reached Fedora 44 / kernel
+6.19.10-300.fc44 and its LXQt session, and successfully ran the helper.
+A real SSH login from Ubuntu verified liveuser access, active sshd, disabled
+password/root authentication and the copied test files. The VM was shut down
+through SSH and the USB safely powered off. Physical Lenovo boot, network
+connection and speaker comparison remain pending. Receipts and setup files
+are local under Downloads/fedora-lxqt; the previous installer backup is under
+windows-lenovo/usb-backup-before-fedora-20261014.
