@@ -433,3 +433,15 @@ second-through-fifth harmonic ratios 2.51/2.74 percent and broadband residual
 window, so they remain acoustic-chain estimates, not amplifier THD or proof of
 speaker integrity. User hearing/temperature feedback after this longer test is
 pending; do not infer sustained-playback safety from its completed shutdown.
+
+The user missed the first extended pulse, then confirmed the speakers were
+still cool. One announced repeat of the same 120 ms right pulse completed
+with flags `0x1F06`, full capture, zero errors, one enable and verified shutdown.
+The saved amplifier status has no fault or watchdog trip. Both microphone
+recordings show about 106-107 ms above the minus-6-dB envelope threshold and
+no clipping after Ubuntu's startup transient. Central-window Ubuntu harmonic
+ratios are 2.66/3.75 percent, again acoustic-chain estimates rather than
+calibrated amplifier distortion. Headphone services and input volume were
+restored. The user reports that this beep sounds fine. Temperature feedback
+after the repeat remains pending; the next prepared check is the left channel
+at the same level and duration, with no further amplitude increase.
