@@ -160,8 +160,9 @@ SofPlayPrepareSpeaker(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
 #else
     static const ULONG host[] = {76,0x30010000,0,1,1,0,0,36,0,2,2,0,2,0,0,0,0,0,0};
     static const ULONG dai[] = {80,0x30010000,4,2,1,0,0,36,0,0,2,0,2,0,0,0,0,1,1,0};
+    // Match the packaged SSP1 topology and the isolated speaker diagnostic.
     static const ULONG config[] = {112,0x80010000,1,1,0x4001,0,0,0,0,0,0,0,0,60,
-                                   0,24000000,48000,3072000,2,3,3,32,32,1,0,0,0,0};
+                                   0,19200000,48000,3072000,2,3,3,32,32,1,0,0,0,0};
 #endif
     static const ULONG hostToBuffer[] = {16,0x30030000,0,2};
     static const ULONG bufferToDai[] = {16,0x30030000,2,4};

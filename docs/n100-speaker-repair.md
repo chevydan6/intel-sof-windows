@@ -350,3 +350,29 @@ or a combination. They do not establish electrical amplifier THD, a damaged
 speaker, or safe sustained playback. No obvious hard clipping is established.
 Hold further amplitude escalation while investigating this distortion; thermal
 feedback after the latest lower-level pulse remains pending.
+
+## Playback-path review after the matched comparison
+
+The user confirmed the matched lower-level pulse also left the speakers cool.
+A source review, with no additional speaker enable, compared the held ordinary
+speaker graph against the diagnostic graph. Both use signed S32, SSP1, I2S,
+48 kHz, two 32-bit slots and a 3.072 MHz bit clock. The headphone-specific
+S24 conversion is excluded from the speaker build. Previous sample arithmetic
+checks did not reproduce clipping; the original application's format and DSP
+output still cannot be reconstructed from these facts alone.
+
+The ordinary speaker graph still requested a 24 MHz MCLK, unlike the packaged
+board topology and the successful diagnostic's 19.2 MHz request. It now uses
+19.2 MHz as well. The cross-path regression check failed on the old value and
+passes with the correction, also checking S32 format, playback direction and
+SSP identity. The ACX workflow runs this check and tracks its speaker-source
+inputs. The amplifier itself needs no MCLK, per the
+[manufacturer's device description](https://www.analog.com/en/products/max98360a.html),
+so this consistency fix does not establish the cause of the heat or harmonics.
+
+The original normal speaker stream has no amplifier ownership/start/stop client.
+The current production-facing speaker path remains held, while explicit
+short diagnostics use the guarded amplifier client. Do not remove the hold to
+restore music playback: any future normal speaker route requires verified
+amplifier lifecycle integration as well as thermal and audible validation.
+No new speaker pulse or driver installation occurred during this review.

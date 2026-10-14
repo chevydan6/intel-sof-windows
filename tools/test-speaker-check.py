@@ -5,8 +5,8 @@ from pathlib import Path
 import re,subprocess,tempfile
 root=Path(__file__).resolve().parents[1]
 s=(root/'driver/speaker/speaker-check.inc').read_text()
-def words(name):
- m=re.search(r'const ULONG '+name+r'\[\] = \{([^}]+)\}',s);assert m,name
+def words(name, source=s):
+ m=re.search(r'const ULONG '+name+r'\[\] = \{([^}]+)\}',source);assert m,name
  a=[int(v.strip(),0) for v in m[1].split(',')]
  assert a[0]==len(a)*4
  return a
@@ -17,6 +17,14 @@ assert host[12]==dai[12]==2 and host[16]==dai[16]==0
 assert dai[17]==cfg[3]==1 and dai[18]==cfg[2]==1
 assert cfg[4]==0x4001 and cfg[15:23]==[19200000,48000,3072000,2,3,3,32,32]
 assert cfg[17]==cfg[16]*cfg[18]*cfg[22]
+# Ordinary speaker playback and the isolated diagnostic must describe the
+# same physical SSP1 link. The headphone branch intentionally uses SSP0.
+startup=(root/'driver/acx/sofplay-startup.inc').read_text()
+speaker=startup[startup.index('SofPlayPrepareSpeaker('):].split('#else',1)[1].split('#endif',1)[0]
+assert words('config',speaker)==cfg, 'Ordinary speaker SSP1 configuration differs from the tested link'
+normal_host,normal_dai=map(lambda name:words(name,speaker),['host','dai'])
+assert normal_host[12]==normal_dai[12]==host[12]==dai[12]
+assert normal_dai[16:19]==dai[16:19]
 assert words('connect1')[2:]==[20,22] and words('connect2')[2:]==[22,24]
 def function(signature):
  a=s.index(signature);b=s.index('{',a);e=b+1;depth=1
