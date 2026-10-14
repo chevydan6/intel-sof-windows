@@ -17,6 +17,10 @@ NTSTATUS SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
 #include <initguid.h>
 #include <wdmguid.h>
 #include "sofprobe-ioctl.h"
+#ifdef SOFPLAY_RIGHT_PREVIEW
+#include "speaker/right-preview-policy.h"
+#include "amp/amp-interface.h"
+#endif
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SofProbeEvtDeviceAdd;
@@ -57,6 +61,13 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN ToneTriggerActive;
 #ifdef SOFPLAY_INTEGRATED
     WDFWAITLOCK AcxPowerLock;
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    WDFIOTARGET PreviewAmp;
+    WDFTIMER PreviewTimer;
+    SOF_RIGHT_PREVIEW Preview;
+    SOF_RIGHT_FILTER PreviewFilter;
+    ULONG PreviewOnWrites, PreviewAmpWrites;
+#endif
 #ifdef SOFPLAY_HEADPHONE
     WDFIOTARGET HeadphoneCodec;
     BOOLEAN MicAttempted;
@@ -124,6 +135,12 @@ C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
 
 #ifdef SOFPLAY_INTEGRATED
 static NTSTATUS SofPlayRearmPcmLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context);
+#ifdef SOFPLAY_RIGHT_PREVIEW
+NTSTATUS SofPlayStartPlaybackHardware(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState);
+static NTSTATUS SofRightPreviewCreate(WDFDEVICE device);
+static NTSTATUS SofRightPreviewStop(PSOFPROBE_DEVICE_CONTEXT c, NTSTATUS reason);
+static NTSTATUS SofRightPreviewBegin(PSOFPROBE_DEVICE_CONTEXT c);
+#endif
 #ifdef SOFPLAY_HEADPHONE
 NTSTATUS SofPlayStartPlaybackHardware(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState);
 #include "headphone/codec-client.inc"
@@ -197,6 +214,13 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    if (context->Preview.Phase != 1) return STATUS_DEVICE_NOT_READY;
+    if (!context->AcxHardwareReady) {
+        status = SofPlayStartPlaybackHardware(Device, WdfPowerDeviceD0);
+        if (!NT_SUCCESS(status)) return status;
+    }
+#endif
 #ifdef SOFPLAY_HEADPHONE
     // Child codec enumeration is complete by stream preparation; D0Entry
     // itself remains dormant and never configures the speaker route.
@@ -222,6 +246,9 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
         context->AcxMaxAdvance = 0;
         context->AcxPacketBytes = 0;
         context->AcxEosReceived = FALSE;
+#ifdef SOFPLAY_RIGHT_PREVIEW
+        RtlZeroMemory(&context->PreviewFilter, sizeof(context->PreviewFilter));
+#endif
         *Bytes = SOFPROBE_TONE_BYTES;
         status = STATUS_SUCCESS;
     }
@@ -291,6 +318,20 @@ SofProbeAcxCopySpeakerSamples(_Out_writes_bytes_(Bytes) UCHAR *Destination,
     }
 }
 
+#ifdef SOFPLAY_RIGHT_PREVIEW
+static VOID SofRightPreviewCopy(PSOFPROBE_DEVICE_CONTEXT c, UCHAR *dst, const UCHAR *src, ULONG bytes)
+{
+    ULONG i;
+    for (i = 0; i < bytes; i += 8) {
+        LONG samples[2], result[2];
+        RtlCopyMemory(samples, src + i, 8);
+        result[0] = 0;
+        result[1] = SofRightPreviewSample(&c->PreviewFilter, samples[0], samples[1]);
+        RtlCopyMemory(dst + i, result, 8);
+    }
+}
+#endif
+
 NTSTATUS
 SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
                        _In_reads_bytes_(Bytes) const UCHAR *Source,
@@ -335,11 +376,21 @@ SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
         // The final packet may contain zero valid bytes. Never copy the stale
         // tail of its client buffer, including when the packet wraps the ring.
         copyFirst = min(validBytes, first);
+
+#ifdef SOFPLAY_RIGHT_PREVIEW
+        SofRightPreviewCopy(context, context->AcxRing + offset, Source, copyFirst);
+#else
         SofProbeAcxCopySpeakerSamples(context->AcxRing + offset, Source, copyFirst);
+#endif
         RtlZeroMemory(context->AcxRing + offset + copyFirst, first - copyFirst);
         if (first < Bytes) {
             ULONG copySecond = validBytes > first ? validBytes - first : 0;
-            SofProbeAcxCopySpeakerSamples(context->AcxRing, Source + first, copySecond);
+
+#ifdef SOFPLAY_RIGHT_PREVIEW
+        SofRightPreviewCopy(context, context->AcxRing, Source + first, copySecond);
+#else
+        SofProbeAcxCopySpeakerSamples(context->AcxRing, Source + first, copySecond);
+#endif
             RtlZeroMemory(context->AcxRing + copySecond, Bytes - first - copySecond);
         }
         KeMemoryBarrier();
@@ -405,6 +456,9 @@ SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
     ULONG i;
     LARGE_INTEGER delay;
     NTSTATUS status;
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    if (context->Preview.Phase != 1) return STATUS_INVALID_DEVICE_STATE;
+#endif
     if (!context->SessionActive || !context->TonePrepared ||
         !context->TonePcmConfigured || context->ToneDmaRunning ||
         context->ToneTriggerActive || context->ToneHda == NULL)
@@ -438,6 +492,9 @@ SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
     status = SofProbeAcxTrigger(context, 0x60040000);
     if (NT_SUCCESS(status)) {
         context->ToneTriggerActive = TRUE;
+#ifdef SOFPLAY_RIGHT_PREVIEW
+        status = SofRightPreviewBegin(context);
+#endif
     } else {
         WRITE_REGISTER_UCHAR(context->ToneHda + 0x160, 0);
         context->ToneDmaRunning = FALSE;
@@ -455,6 +512,9 @@ SofProbeAcxPauseLocked(_In_ WDFDEVICE Device)
     ULONG i;
     LARGE_INTEGER delay;
     NTSTATUS status = STATUS_SUCCESS;
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    NTSTATUS ampStatus = SofRightPreviewStop(context, STATUS_SUCCESS);
+#endif
 #ifdef SOFPLAY_HEADPHONE
     NTSTATUS codecStatus = context->HeadphoneCodec != NULL ?
         HeadphoneCodecCommand(context->HeadphoneCodec, IOCTL_CODEC_STOP) : STATUS_SUCCESS;
@@ -477,6 +537,9 @@ SofProbeAcxPauseLocked(_In_ WDFDEVICE Device)
     WRITE_REGISTER_UCHAR(context->ToneHda + 0x163, 0x1c);
 #ifdef SOFPLAY_HEADPHONE
     if (NT_SUCCESS(status)) status = codecStatus;
+#endif
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    if (NT_SUCCESS(status)) status = ampStatus;
 #endif
     return status;
 }
@@ -2872,6 +2935,9 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
 
 #ifdef SOFPLAY_INTEGRATED
 #include "acx/sofplay-startup.inc"
+#ifdef SOFPLAY_RIGHT_PREVIEW
+#include "speaker/right-preview.inc"
+#endif
 #ifdef SOFPLAY_HEADPHONE
 #include "headphone/microphone.inc"
 #endif
@@ -2947,6 +3013,10 @@ SofProbeEvtDeviceAdd(
     if (!NT_SUCCESS(status)) return status;
     status = WdfSpinLockCreate(&attributes, &context->AcxBufferLock);
     if (!NT_SUCCESS(status)) return status;
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    status = SofRightPreviewCreate(device);
+    if (!NT_SUCCESS(status)) return status;
+#endif
     ACX_DEVICE_CONFIG_INIT(&acxConfig);
     status = AcxDeviceInitialize(device, &acxConfig);
     if (!NT_SUCCESS(status)) return status;
@@ -2992,6 +3062,13 @@ SofProbeEvtIoDeviceControl(
     PUCHAR dsp = NULL;
     NTSTATUS status;
 
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    if (IoControlCode == IOCTL_SOFPROBE_RIGHT_PREVIEW_ARM ||
+        IoControlCode == IOCTL_SOFPROBE_RIGHT_PREVIEW_STATUS) {
+        SofRightPreviewControl(device, Request, IoControlCode, InputBufferLength, OutputBufferLength);
+        return;
+    }
+#endif
 #ifdef SOFPLAY_HEADPHONE
     if (IoControlCode == IOCTL_SOFPROBE_SPEAKER_SNAPSHOT) {
         SOFSPEAKER_SNAPSHOT *snapshot = NULL;
@@ -3175,6 +3252,7 @@ SofProbeEvtIoDeviceControl(
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
         acx->Version = 8;
         acx->ThermalHold = 1;
+        acx->HeadphoneOnly = 0;
 #ifdef SOFPLAY_HEADPHONE
         acx->HeadphoneOnly = context->SpeakerTestAttempted ? 0 : 1;
         acx->ThermalHold = context->SpeakerTestAttempted ? 0 : 1;
@@ -3355,6 +3433,14 @@ SofProbeEvtD0Exit(
     UNREFERENCED_PARAMETER(TargetState);
 #ifdef SOFPLAY_INTEGRATED
     WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    (VOID)SofRightPreviewStop(context, STATUS_SUCCESS);
+    if (context->PreviewAmp != NULL) {
+        WdfIoTargetClose(context->PreviewAmp);
+        WdfObjectDelete(context->PreviewAmp);
+        context->PreviewAmp = NULL;
+    }
+#endif
     WdfSpinLockAcquire(context->AcxBufferLock);
     context->AcxHardwareReady = FALSE;
     context->AcxRing = NULL;
@@ -3404,6 +3490,19 @@ SofProbeEvtReleaseHardware(
     UNREFERENCED_PARAMETER(ResourcesTranslated);
     {
         PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+#ifdef SOFPLAY_RIGHT_PREVIEW
+        // Also handle surprise removal; prevent requeue before draining.
+        WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+        (VOID)SofRightPreviewStop(context, STATUS_SUCCESS);
+        WdfWaitLockRelease(context->AcxPowerLock);
+        // Drain the passive callback outside its lock before unmapping MMIO.
+        WdfTimerStop(context->PreviewTimer, TRUE);
+        if (context->PreviewAmp != NULL) {
+            WdfIoTargetClose(context->PreviewAmp);
+            WdfObjectDelete(context->PreviewAmp);
+            context->PreviewAmp = NULL;
+        }
+#endif
 #ifdef SOFPLAY_INTEGRATED
         WdfWaitLockAcquire(context->AcxPowerLock, NULL);
         if (context->AcxTimer != NULL)

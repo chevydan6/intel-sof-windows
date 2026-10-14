@@ -5,6 +5,8 @@ on:
     paths:
       - 'driver/acx/**'
       - 'driver/speaker/**'
+      - 'driver/amp/amp-interface.h'
+      - 'tools/test-right-preview.py'
       - 'driver/sofprobe.c'
       - 'driver/sofprobe-ioctl.h'
       - 'tools/test-audio-format.py'
@@ -26,6 +28,7 @@ jobs:
       - run: python3 tools/test-acx-ring.py
       - run: python3 tools/test-amp-hold.py
       - run: python3 tools/test-speaker-check.py
+      - run: python3 tools/test-right-preview.py
   build:
     runs-on: windows-2022
     steps:
@@ -48,5 +51,30 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: sofplay-development-package
+          path: driver/acx/x64/Debug/sofplay/
+          if-no-files-found: error
+
+  right-preview:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+      - name: Build explicitly armed right-only preview
+        shell: pwsh
+        run: msbuild driver/acx/sofplay.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /p:RightPreview=true /verbosity:minimal
+      - name: Verify generated INF
+        shell: pwsh
+        run: |
+          $tool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Tools' -Recurse -Filter InfVerif.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Select-Object -Last 1
+          if (-not $tool) { throw 'x64 InfVerif.exe was not found' }
+          & $tool.FullName /w driver/acx/x64/Debug/sofplay.inf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sofplay-right-preview-package
           path: driver/acx/x64/Debug/sofplay/
           if-no-files-found: error

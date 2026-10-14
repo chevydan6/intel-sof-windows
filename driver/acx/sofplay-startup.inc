@@ -214,6 +214,12 @@ SofPlayStartPlaybackHardware(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE 
     NTSTATUS status;
     UNREFERENCED_PARAMETER(PreviousState);
     WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    if (context->Preview.Phase != 1 || context->RomEntryAttempted) {
+        WdfWaitLockRelease(context->AcxPowerLock);
+        return STATUS_DEVICE_NOT_READY;
+    }
+#endif
 #ifdef SOFPLAY_HEADPHONE
     if (context->AcxHardwareReady) { WdfWaitLockRelease(context->AcxPowerLock); return STATUS_SUCCESS; }
     // Preserve the first failure until device restart; boot helpers deliberately
@@ -283,6 +289,10 @@ SofPlayEvtD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousSta
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     UNREFERENCED_PARAMETER(PreviousState);
     WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+#ifdef SOFPLAY_RIGHT_PREVIEW
+    if (context->PreviewAmp == NULL && !context->SessionActive && !context->ToneDmaRunning)
+        RtlZeroMemory(&context->Preview, sizeof(context->Preview));
+#endif
     WdfSpinLockAcquire(context->AcxBufferLock);
     context->AcxHardwareReady = FALSE;
     context->AcxRing = NULL;

@@ -383,3 +383,10 @@ typedef struct _SOFSPEAKER_SNAPSHOT {
     ULONG PositionOffset, PositionReadMask, FirstCapturedBytes, SecondCapturedBytes;
     ULONG PositionFirst[19], PositionSecond[19];
 } SOFSPEAKER_SNAPSHOT;
+
+// Explicitly armed one-shot application audio preview; right channel only.
+#define IOCTL_SOFPROBE_RIGHT_PREVIEW_ARM CTL_CODE(FILE_DEVICE_UNKNOWN,0x827,METHOD_BUFFERED,FILE_WRITE_ACCESS)
+#define IOCTL_SOFPROBE_RIGHT_PREVIEW_STATUS CTL_CODE(FILE_DEVICE_UNKNOWN,0x828,METHOD_BUFFERED,FILE_READ_ACCESS)
+typedef struct {
+    ULONG Version, Phase, Powered, Error, OnWrites, MaximumMs;
+} SOF_RIGHT_PREVIEW_STATUS;
