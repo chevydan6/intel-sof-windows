@@ -162,3 +162,33 @@ Register offsets and format/status fields follow the upstream
 Host tests exercise the production snapshot routine against distinguishable
 register values and verify that the sampled words are not modified. This is
 configuration/error readback, not an electrical measurement of the pins.
+
+Source `a2f062c` passed build 38537054221 and installed as `oem48.inf`, version
+`8.42.58.708`. The initial client buffer was incorrectly 32 bytes instead of
+48; the driver rejected the undersized query, and the test still completed
+amplifier-off/DSP shutdown. The reader was corrected and the dry test repeated.
+It returned full capture, flags `0xC01` and zero status/cleanup errors, but all
+eight SSP register values were `0xFFFFFFFF`. These values are unavailable
+readback, not evidence that any decoded error bit is set. The status query
+must be saved before the parent restart, which recreates its context.
+
+## Firmware playback counters
+
+The next snapshot format (version 2, 216 bytes) adds two bounded reads of the
+firmware's stream-position record around one and four seconds of capture.
+The hash-pinned image's XMan declares a 4096-byte stream window at BAR offset
+`0xC1000`; the exact PCM_PARAMS reply supplies the relative record offset.
+Bounds, alignment, record size, component ID and command are checked. Two
+matching copies are required, with at most three attempts, because the DSP
+can update the record concurrently.
+
+Only the fixed diagnostic PCM changes: `no_stream_position=1` is retained and
+`cont_update_posn=1` enables continuous shared-memory updates without unsolicited
+IPC notifications. This follows the upstream
+[host update implementation](https://github.com/thesofproject/sof/blob/v2.2/src/audio/host.c)
+and [stream ABI](https://github.com/thesofproject/sof/blob/v2.2/src/include/ipc/stream.h).
+The source code is an implementation reference; actual counter validity and
+progress must be established on the installed firmware. Ordinary headphone
+playback and the fixed amplifier lease are unchanged. Initial validation is
+an amplifier-off run. The user has not switched out of Windows to compare
+speaker behavior after the original heating.

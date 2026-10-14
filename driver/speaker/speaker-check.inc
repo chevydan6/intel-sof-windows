@@ -10,7 +10,30 @@ typedef struct {
     ULONG Mode, InitialOnWrites, InitialPosition;
     ULONGLONG PulseStart;
     const LONG *Samples;
+    ULONG PositionOffset;
+    BOOLEAN PositionReady;
 } SOFSPEAKER_CHECK;
+
+static BOOLEAN
+SofSpeakerReadPosition(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, ULONG *out)
+{
+    ULONG again[19], attempt, i;
+    // This exact firmware is hash-pinned at load. Its XMan stream window is
+    // BAR + 0xC1000, length 4096; PCM_PARAMS supplies the relative record offset.
+    if (!test->PositionReady || c->SessionDsp == NULL ||
+        (test->PositionOffset & 3) || test->PositionOffset > 4096 - sizeof(again))
+        return FALSE;
+    for (attempt = 0; attempt < 3; ++attempt) {
+        for (i = 0; i < 19; ++i)
+            out[i] = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0xC1000 + test->PositionOffset + 4*i));
+        KeMemoryBarrier();
+        for (i = 0; i < 19; ++i)
+            again[i] = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0xC1000 + test->PositionOffset + 4*i));
+        if (RtlCompareMemory(out, again, sizeof(again)) == sizeof(again))
+            return out[0] == sizeof(again) && out[1] == 0x600A0014 && out[2] == 0 && out[3] == 20;
+    }
+    return FALSE;
+}
 
 static VOID
 SofSpeakerSnapshot(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, ULONG position, ULONG bytes)
@@ -28,7 +51,10 @@ SofSpeakerSnapshot(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, ULONG pos
     s->Sscr2 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11040));
     s->Sspsp2 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11044));
     s->Sscr3 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11048));
-    s->Version = 1;
+    s->PositionOffset = test->PositionOffset;
+    s->FirstCapturedBytes = bytes;
+    if (SofSpeakerReadPosition(c, test, s->PositionFirst)) s->PositionReadMask |= 1;
+    s->Version = 2;
 }
 
 static NTSTATUS
@@ -102,6 +128,7 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
     const ULONG *messages[] = {pipeline,buffer,host,dai,config,connect1,connect2,complete};
     ULONG pcm[27] = {108,0x60010000,20};
     SOFPROBE_TONE_RESULT tone;
+    SOFPROBE_IPC3_SESSION_MEMORY_RESULT reply;
     PHYSICAL_ADDRESS table;
     PUCHAR ring;
     ULONG i;
@@ -135,10 +162,19 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
     table = WdfCommonBufferGetAlignedLogicalAddress(c->TonePageTable);
     pcm[6]=84; pcm[8]=table.LowPart; pcm[9]=12; pcm[10]=SOFPROBE_TONE_BYTES;
     pcm[15]=2; pcm[17]=48000; pcm[18]=0x00020001;
-    pcm[19]=0x00040004; pcm[20]=SOFPROBE_TONE_PERIOD_BYTES; pcm[21]=1;
+    pcm[19]=0x00040004; pcm[20]=SOFPROBE_TONE_PERIOD_BYTES;
+    pcm[21]=0x00010001; // No IPC notifications; continuously refresh stream-position memory.
     test->Configured = TRUE; // Ambiguous reply still needs cleanup.
-    status = SofMicIpc(c, pcm, result);
-    if (!NT_SUCCESS(status)) return status;
+    RtlZeroMemory(&reply, sizeof(reply));
+    status = SofProbeExchangeMessage(c, pcm, sizeof(pcm), &reply);
+    if (!NT_SUCCESS(status) || reply.Result || reply.ReplyError ||
+        reply.ReplySize != 20 || reply.ReplyWords[3] != 20 ||
+        (reply.ReplyWords[4] & 3) || reply.ReplyWords[4] > 4096 - 76) {
+        result->Command = pcm[1]; result->Component = pcm[2];
+        result->ReplyError = (ULONG)reply.ReplyError;
+        return NT_SUCCESS(status) ? STATUS_DEVICE_DATA_ERROR : status;
+    }
+    test->PositionOffset = reply.ReplyWords[4]; test->PositionReady = TRUE;
     KeMemoryBarrier();
     if (!SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8,
                                    (test->Mode - 1) & 1))
@@ -184,6 +220,11 @@ SofSpeakerTick(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTU
         status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_STOP, &state);
         if (!NT_SUCCESS(status)) { result->Command = IOCTL_SOFAMP_STOP; return status; }
         test->Stopped = TRUE; result->Reserved |= 0x200;
+    }
+    if (result->Bytes >= 4 * 48000UL * 8 && c->SpeakerSnapshot.SecondCapturedBytes == 0) {
+        c->SpeakerSnapshot.SecondCapturedBytes = result->Bytes;
+        if (SofSpeakerReadPosition(c, test, c->SpeakerSnapshot.PositionSecond))
+            c->SpeakerSnapshot.PositionReadMask |= 2;
     }
     return STATUS_SUCCESS;
 }

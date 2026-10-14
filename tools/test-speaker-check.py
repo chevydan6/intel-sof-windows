@@ -50,6 +50,7 @@ typedef uint32_t *PULONG;typedef struct {int64_t QuadPart;} LARGE_INTEGER;
 #define READ_REGISTER_ULONG(p) (*(p))
 #define WRITE_REGISTER_UCHAR(p,v) (*(p)=(v))
 #define KeMemoryBarrier() ((void)0)
+#define RtlCompareMemory(a,b,n) (memcmp(a,b,n)==0 ? (n) : 0)
 '''+snapshot+r'''
 typedef struct {uint8_t *ToneHda;BOOLEAN ToneDmaRunning;uint8_t *SessionDsp;SOFSPEAKER_SNAPSHOT SpeakerSnapshot;} CONTEXT,*PSOFPROBE_DEVICE_CONTEXT;
 typedef struct {ULONG Bytes,Reserved,Command;} CAPTURE,*PSOFMIC_CAPTURE_RESULT;
@@ -68,7 +69,7 @@ static NTSTATUS SofMicIpc(CONTEXT *c,const ULONG *words,CAPTURE *r){(void)c;(voi
 static void WdfIoTargetClose(void *p){assert(p);closed++;}
 static void WdfObjectDelete(void *p){assert(p);}
 static int KeDelayExecutionThread(int a,int b,LARGE_INTEGER *d){(void)a;(void)b;(void)d;return 0;}
-'''+function('static VOID\nSofSpeakerSnapshot(')+'\n'+function('static NTSTATUS\nSofSpeakerTick(')+'\n'+function('static NTSTATUS\nSofSpeakerStopOutput(')+r'''
+'''+function('static BOOLEAN\nSofSpeakerReadPosition(')+'\n'+function('static VOID\nSofSpeakerSnapshot(')+'\n'+function('static NTSTATUS\nSofSpeakerTick(')+'\n'+function('static NTSTATUS\nSofSpeakerStopOutput(')+r'''
 int main(void){
  LONG pcm[6144*2];
  for(ULONG ch=0;ch<2;ch++){
@@ -85,7 +86,8 @@ int main(void){
   SofSpeakerFillTestSamples(pcm,6144,ch);pcm[22]=0x7fffffff;
   assert(!SofSpeakerTestSamplesValid(pcm,6144,ch));
  }
- _Alignas(8) uint8_t registers[0x200]={0},dsp[0x11100]={0};
+ _Alignas(8) uint8_t registers[0x200]={0};
+ _Alignas(8) static uint8_t dsp[0xC2000]={0};
  CONTEXT ctx={.ToneHda=registers,.ToneDmaRunning=1,.SessionDsp=dsp};
  ULONG offsets[8]={0x00,0x04,0x08,0x2c,0x30,0x40,0x44,0x48};
  for(ULONG i=0;i<8;i++) *(PULONG)(dsp+0x11000+offsets[i])=0x100+i;
@@ -103,7 +105,7 @@ int main(void){
    now+=1000000;assert(SofSpeakerTick(&ctx,&t,&r)==0 && starts==1 && stops==1);
   }else assert(starts==0 && stops==0);
   if(mode){
-   assert(ctx.SpeakerSnapshot.Version==1 && ctx.SpeakerSnapshot.Mode==mode);
+   assert(ctx.SpeakerSnapshot.Version==2 && ctx.SpeakerSnapshot.Mode==mode);
    assert(ctx.SpeakerSnapshot.HostPosition==384 && ctx.SpeakerSnapshot.CapturedBytes==48000*8);
    ULONG values[8];memcpy(values,&ctx.SpeakerSnapshot.Sscr0,sizeof(values));
    for(ULONG i=0;i<8;i++){
@@ -126,6 +128,28 @@ int main(void){
  failStart=failStop=0;starts=0;memset(pcm,0,sizeof(pcm));
  SOFSPEAKER_CHECK bad={.Mode=3,.Amp=&ctx,.Samples=pcm};CAPTURE badResult={.Bytes=48000*8};
  assert(SofSpeakerTick(&ctx,&bad,&badResult)==STATUS_DEVICE_DATA_ERROR && starts==0);
+ // Firmware position records are bounded, identified, and copied without writes.
+ SOFSPEAKER_CHECK positionTest={.PositionReady=1,.PositionOffset=16};
+ ULONG *record=(PULONG)(dsp+0xC1010),copy[19];
+ for(ULONG i=0;i<19;i++)record[i]=i;
+ record[0]=76;record[1]=0x600A0014;record[2]=0;record[3]=20;
+ assert(SofSpeakerReadPosition(&ctx,&positionTest,copy));
+ assert(memcmp(copy,record,sizeof(copy))==0);
+ record[3]=10;assert(!SofSpeakerReadPosition(&ctx,&positionTest,copy));record[3]=20;
+ positionTest.PositionOffset=4096-72;assert(!SofSpeakerReadPosition(&ctx,&positionTest,copy));
+ positionTest.PositionOffset=3;assert(!SofSpeakerReadPosition(&ctx,&positionTest,copy));
+ positionTest.PositionOffset=16;positionTest.PositionReady=0;
+ assert(!SofSpeakerReadPosition(&ctx,&positionTest,copy));
+ positionTest.PositionReady=1;positionTest.Mode=1;positionTest.Samples=pcm;
+ SofSpeakerFillTestSamples(pcm,6144,0);memset(&ctx.SpeakerSnapshot,0,sizeof(ctx.SpeakerSnapshot));
+ CAPTURE progress={.Bytes=48000*8};starts=stops=0;
+ assert(SofSpeakerTick(&ctx,&positionTest,&progress)==0);
+ assert(ctx.SpeakerSnapshot.PositionReadMask==1 && ctx.SpeakerSnapshot.PositionFirst[9]==9);
+ record[9]=123456;progress.Bytes=4*48000*8;
+ assert(SofSpeakerTick(&ctx,&positionTest,&progress)==0);
+ assert(ctx.SpeakerSnapshot.PositionReadMask==3 && ctx.SpeakerSnapshot.PositionSecond[9]==123456);
+ assert(!starts && !stops);
+ _Static_assert(sizeof(SOFSPEAKER_SNAPSHOT)==216,"snapshot ABI");
  puts("PASS: speaker SSP1/S32 ABI, channel isolation, fixed low signal, dry mode, one pulse, and shutdown-before-IPC cleanup");
 }
 '''

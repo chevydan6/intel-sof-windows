@@ -60,12 +60,6 @@ try {
  if($Pulse){$mode+=2}
  $code=[uint32](0x22A068+4*($mode-1))
  $bytes=[SofSpeakerCaptureClient]::Capture($paths[0],$code)
- $s=[SofProbeClient]::Exchange($paths[0],0x226078,$null)
- if($s.Length -ne 12){throw 'Malformed speaker snapshot'}
- $snapshot=[ordered]@{Version=$s[0];Mode=$s[1];HostPosition=$s[2];CapturedBytes=$s[3]}
- $names=@('SSCR0','SSCR1','SSSR','SSPSP','SSTSA','SSCR2','SSPSP2','SSCR3')
- for($i=0;$i -lt 8;$i++){$snapshot[$names[$i]]=('0x{0:X8}' -f $s[4+$i])}
- $snapshot | ConvertTo-Json | Tee-Object -FilePath ($Output+'.ssp.json') | Write-Host
  $w=New-Object uint32[] 16
  for($i=0;$i -lt 16;$i++){$w[$i]=[BitConverter]::ToUInt32($bytes,$i*4)}
  $r=[ordered]@{Version=$w[0];Stage=$w[1];Status=('0x{0:X8}' -f $w[2]);CleanupStatus=('0x{0:X8}' -f $w[3]);Bytes=$w[4];Position=$w[5];HdaStatus=('0x{0:X2}' -f $w[6]);ReplyError=('0x{0:X8}' -f $w[7]);Command=('0x{0:X8}' -f $w[8]);Component=$w[9];MaxPollUs=$w[10];ElapsedMs=$w[11];Rate=$w[12];Channels=$w[13];Bits=$w[14];SpeakerFlags=('0x{0:X8}' -f $w[15]);Channel=$Channel;Pulse=[bool]$Pulse}
@@ -80,6 +74,17 @@ try {
   $bw.Write([Text.Encoding]::ASCII.GetBytes('data'));$bw.Write([uint32]$w[4]);$bw.Write($bytes,64,[int]$w[4])
  } finally {$bw.Dispose();$f.Dispose()}
  Write-Host "Saved five-second speaker diagnostic recording: $Output"
+ $s=[SofProbeClient]::Exchange($paths[0],0x226078,$null)
+ if($s.Length -ne 54){throw 'Malformed speaker snapshot'}
+ $snapshot=[ordered]@{Version=$s[0];Mode=$s[1];HostPosition=$s[2];CapturedBytes=$s[3]}
+ $names=@('SSCR0','SSCR1','SSSR','SSPSP','SSTSA','SSCR2','SSPSP2','SSCR3')
+ for($i=0;$i -lt 8;$i++){$snapshot[$names[$i]]=('0x{0:X8}' -f $s[4+$i])}
+ $snapshot['AllRegistersReadAsOnes']=(@($s[4..11]|Where-Object {$_ -ne [uint32]::MaxValue}).Count -eq 0)
+ $snapshot['PositionOffset']=$s[12];$snapshot['PositionReadMask']=$s[13]
+ $snapshot['FirstCapturedBytes']=$s[14];$snapshot['SecondCapturedBytes']=$s[15]
+ $snapshot['FirstPositionWords']=@($s[16..34]);$snapshot['SecondPositionWords']=@($s[35..53])
+ $snapshot | ConvertTo-Json | Tee-Object -FilePath ($Output+'.ssp.json') | Write-Host
+ if($s[0]-ne 2 -or $s[1]-ne $mode -or $s[3]-lt 384000){throw 'No valid pre-enable speaker snapshot'}
 } catch {$failed=$_}
 finally {
  $cleanupFailure=$null;$after=$null

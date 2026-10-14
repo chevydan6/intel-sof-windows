@@ -370,4 +370,6 @@ typedef struct _SOFMIC_CAPTURE_RESULT {
 typedef struct _SOFSPEAKER_SNAPSHOT {
     ULONG Version, Mode, HostPosition, CapturedBytes;
     ULONG Sscr0, Sscr1, Sssr, Sspsp, Sstsa, Sscr2, Sspsp2, Sscr3;
+    ULONG PositionOffset, PositionReadMask, FirstCapturedBytes, SecondCapturedBytes;
+    ULONG PositionFirst[19], PositionSecond[19];
 } SOFSPEAKER_SNAPSHOT;
