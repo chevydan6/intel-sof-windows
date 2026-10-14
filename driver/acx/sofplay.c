@@ -11,6 +11,7 @@
 #include <ksmedia.h>
 #include <wdf.h>
 #include <acx.h>
+#include "sofplay-format.h"
 
 #ifndef SOFPLAY_INTEGRATED
 DRIVER_INITIALIZE DriverEntry;
@@ -239,13 +240,14 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     SofProbeAcxRecord(Device, 5);
     wave = AcxDataFormatGetWaveFormatExtensible(StreamFormat);
     if (wave != NULL) {
+        BOOLEAN extended = wave->Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+            wave->Format.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
         SofProbeAcxRecordFormat(Device, wave->Format.wFormatTag,
-            wave->Format.wBitsPerSample, wave->Samples.wValidBitsPerSample,
-            wave->SubFormat.Data1);
+            wave->Format.wBitsPerSample,
+            extended ? wave->Samples.wValidBitsPerSample : 0,
+            extended ? wave->SubFormat.Data1 : 0);
     }
-    if (AcxDataFormatGetSampleRate(StreamFormat) != 48000 ||
-        AcxDataFormatGetChannelsCount(StreamFormat) != 2 ||
-        AcxDataFormatGetBlockAlign(StreamFormat) != 8) {
+    if (!SofPlaySupportsFormat(wave)) {
         SofProbeAcxRecordFailure(Device, 1, STATUS_NOT_SUPPORTED);
         return STATUS_NOT_SUPPORTED;
     }
