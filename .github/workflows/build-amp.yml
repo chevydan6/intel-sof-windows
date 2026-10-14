@@ -1,4 +1,4 @@
-name: Build amplifier shutdown-only driver
+name: Build guarded amplifier driver
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - 'driver/amp/**'
       - 'driver/acx/sofplay-startup.inc'
       - 'tools/test-amp-hold.py'
+      - 'tools/test-amp-lifecycle.py'
       - '.github/workflows/build-amp.yml'
   workflow_dispatch:
 
@@ -18,6 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 tools/test-amp-hold.py
+      - run: python3 tools/test-amp-lifecycle.py
   build:
     runs-on: windows-2022
     steps:

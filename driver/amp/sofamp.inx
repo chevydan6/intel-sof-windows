@@ -1,5 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-only
-; PUJJOTEEN MX98360A shutdown-only GPIO client. No amplifier enable operation.
+; PUJJOTEEN MX98360A default-off GPIO client with bounded kernel-only diagnostic leases.
 
 [Version]
 Signature="$Windows NT$"
@@ -55,6 +55,6 @@ KmdfLibraryVersion=$KMDFVERSION$
 
 [Strings]
 ProviderName="Open SOF Windows Project"
-DeviceName="PUJJOTEEN speaker amplifier shutdown only (development)"
-ServiceName="SOF amplifier shutdown only"
-DiskName="SOF amplifier shutdown development package"
+DeviceName="PUJJOTEEN speaker amplifier guarded control (development)"
+ServiceName="SOF amplifier guarded control"
+DiskName="SOF amplifier guarded development package"

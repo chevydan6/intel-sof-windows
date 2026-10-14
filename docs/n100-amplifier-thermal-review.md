@@ -48,3 +48,28 @@ The next software correction is proper ownership of the ACPI-provided amplifier 
 - [Linux codec lifecycle](https://github.com/torvalds/linux/blob/master/sound/soc/codecs/max98357a.c).
 - [Coreboot Pujjo amplifier configuration](https://github.com/coreboot/coreboot/blob/master/src/mainboard/google/brya/variants/pujjo/overridetree.cb).
 - [Coreboot Nissa GPIO initialization](https://github.com/coreboot/coreboot/blob/master/src/mainboard/google/brya/variants/baseboard/nissa/gpio.c).
+
+## Continued speaker repair after headphone validation
+
+The user confirms the speaker area has stayed cool during headphone use with
+the amplifier shutdown driver installed. A fresh read shows both devices OK
+and amplifier stage 3/status 0/off-write count 1. This supports continuing to
+investigate unnecessary amplifier drive; it does not rule out a damaged or
+partially shorted speaker.
+
+The source now provides a guarded amplifier state machine with default-off,
+file ownership, kernel-only enable/renew, watchdog shutdown and fault latching.
+Its initial diagnostic lease is 100 ms, limited to 250 ms total per START.
+The speaker parent hold remains intact. See [the current control design and
+limits](../driver/amp/README.md). Neither a successful build nor an accepted GPIO
+write establishes physical cutoff or a repaired speaker.
+
+A fresh review of the pinned board's `cras-config.max98357/dsp.ini` found only
+source/sink declarations, not a missing EQ/compressor chain. The public speaker
+curve still specifies -9 dB at maximum. SSP1's topology specifies I2S, 48 kHz,
+3.072 MHz BCLK and two 32-bit slots, matching the old transport's audio clocks
+and format. Its MCLK field is 19.2 MHz, whereas the old prototype supplied
+24 MHz; that discrepancy should be corrected in any future speaker diagnostic.
+The MAX98360 does not consume MCLK, so this difference alone does not establish
+the cause of distortion/heating. No clock polarity or speaker polarity has been
+changed speculatively.

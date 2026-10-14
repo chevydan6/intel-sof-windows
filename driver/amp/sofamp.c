@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// PUJJOTEEN amplifier shutdown-only development driver. There is deliberately
-// no enable operation, user IOCTL interface, audio stream, or raw MMIO access.
+// PUJJOTEEN default-off amplifier control. Only a kernel client can request
+// a short diagnostic lease. No raw MMIO or user-mode enable operation.
 #include <ntddk.h>
 #include <wdf.h>
 #include <acpiioct.h>
@@ -8,6 +8,8 @@
 #define RESHUB_USE_HELPER_ROUTINES
 #include <reshub.h>
 #include "sofamp-policy.h"
+#include "amp-interface.h"
+#include "amp-lifecycle.h"
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD SofAmpAdd;
@@ -15,12 +17,17 @@ EVT_WDF_DEVICE_PREPARE_HARDWARE SofAmpPrepare;
 EVT_WDF_DEVICE_RELEASE_HARDWARE SofAmpRelease;
 EVT_WDF_DEVICE_D0_ENTRY SofAmpEnter;
 EVT_WDF_DEVICE_D0_EXIT SofAmpExit;
+EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL SofAmpControl;
+EVT_WDF_TIMER SofAmpTimer;
+EVT_WDF_FILE_CLEANUP SofAmpFileCleanup;
 
 typedef struct _SOFAMP_CONTEXT {
     LARGE_INTEGER Connection;
     WDFIOTARGET Gpio;
     BOOLEAN Validated;
-    ULONG OffWrites;
+    SOFAMP_STATE State;
+    WDFWAITLOCK Lock;
+    WDFTIMER Timer;
 } SOFAMP_CONTEXT;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFAMP_CONTEXT, SofAmpContext);
 
@@ -35,12 +42,23 @@ SofAmpReport(WDFDEVICE device, ULONG stage, NTSTATUS status)
             KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES, &key))) {
         (VOID)WdfRegistryAssignULong(key, &stageName, stage);
         (VOID)WdfRegistryAssignULong(key, &statusName, (ULONG)status);
-        (VOID)WdfRegistryAssignULong(key, &countName, SofAmpContext(device)->OffWrites);
+        SOFAMP_STATE *s = &SofAmpContext(device)->State;
+        const PCWSTR names[] = {L"SofAmpActive",L"SofAmpFaulted",L"SofAmpOutputRequest",
+            L"SofAmpOnWrites",L"SofAmpWatchdogTrips",L"SofAmpFaultStatus",L"SofAmpCleanupStatus"};
+        ULONG values[] = {s->Active,s->Faulted,s->OutputRequest,s->OnWrites,s->WatchdogTrips,
+            (ULONG)s->FaultStatus,(ULONG)s->CleanupStatus};
+        ULONG i;
+        (VOID)WdfRegistryAssignULong(key, &countName, s->OffWrites);
+        for (i = 0; i < RTL_NUMBER_OF(names); ++i) {
+            UNICODE_STRING name;
+            RtlInitUnicodeString(&name,names[i]);
+            (VOID)WdfRegistryAssignULong(key,&name,values[i]);
+        }
         WdfRegistryClose(key);
     }
     KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
         "SOFAMP: stage=%lu status=%08lx off-writes=%lu\n",
-        stage, status, SofAmpContext(device)->OffWrites));
+        stage, status, SofAmpContext(device)->State.OffWrites));
 }
 
 static NTSTATUS
@@ -76,28 +94,118 @@ SofAmpValidateCrs(WDFDEVICE device)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS
-SofAmpWriteOff(WDFDEVICE device)
+static ULONGLONG SofAmpNowMs(VOID)
 {
+    return KeQueryInterruptTime() / 10000;
+}
+
+static NTSTATUS SofAmpDriveRaw(PVOID io, UCHAR value)
+{
+    WDFDEVICE device = (WDFDEVICE)io;
     SOFAMP_CONTEXT *context = SofAmpContext(device);
-    // Bit 0 is the ONLY pin in the validated resource. Zero drives EN low.
-    UCHAR value = 0;
+    UCHAR requested = value;
     WDF_MEMORY_DESCRIPTOR data;
     WDF_REQUEST_SEND_OPTIONS options;
     ULONG_PTR transferred = 0;
     NTSTATUS status;
-    if (!context->Validated || context->Gpio == NULL) return STATUS_DEVICE_NOT_READY;
+    if (!context->Validated || context->Gpio == NULL || value > 1)
+        return STATUS_DEVICE_NOT_READY;
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&data, &value, sizeof(value));
     WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
-    WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_SEC(2));
-    // METHOD_BUFFERED requires an equally sized output buffer. Its echoed
-    // value is NOT a measurement of pin voltage or amplifier temperature.
+    WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_MS(100));
     status = WdfIoTargetSendIoctlSynchronously(context->Gpio, NULL,
         IOCTL_GPIO_WRITE_PINS, &data, &data, &options, &transferred);
-    if (NT_SUCCESS(status) && (transferred != sizeof(value) || value != 0))
+    if (NT_SUCCESS(status) && (transferred != sizeof(value) || value != requested))
         status = STATUS_DEVICE_DATA_ERROR;
-    if (NT_SUCCESS(status)) ++context->OffWrites;
+    // The GPIO buffer is an echo, not electrical or temperature readback.
     return status;
+}
+
+static VOID SofAmpArmTimer(SOFAMP_CONTEXT *c)
+{
+    ULONGLONG now = SofAmpNowMs();
+    ULONG wait = c->State.Deadline > now ? (ULONG)(c->State.Deadline - now) : 1;
+    if (c->State.Active) WdfTimerStart(c->Timer, WDF_REL_TIMEOUT_IN_MS(wait));
+}
+
+VOID SofAmpTimer(WDFTIMER timer)
+{
+    WDFDEVICE device = (WDFDEVICE)WdfTimerGetParentObject(timer);
+    SOFAMP_CONTEXT *c = SofAmpContext(device);
+    WdfWaitLockAcquire(c->Lock, NULL);
+    if (c->State.Ready && c->State.Active) {
+        NTSTATUS status = SofAmpStateExpired(&c->State, device);
+        // A renewal can make an already queued timer callback early.
+        SofAmpArmTimer(c);
+        if (!NT_SUCCESS(status)) SofAmpReport(device, 6, status);
+    }
+    WdfWaitLockRelease(c->Lock);
+}
+
+VOID SofAmpFileCleanup(WDFFILEOBJECT file)
+{
+    WDFDEVICE device = WdfFileObjectGetDevice(file);
+    SOFAMP_CONTEXT *c = SofAmpContext(device);
+    WdfWaitLockAcquire(c->Lock, NULL);
+    SofAmpStateFileCleanup(&c->State, device, file);
+    WdfWaitLockRelease(c->Lock);
+}
+
+VOID SofAmpControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
+                   size_t inputBytes, ULONG code)
+{
+    WDFDEVICE device = WdfIoQueueGetDevice(queue);
+    SOFAMP_CONTEXT *c = SofAmpContext(device);
+    SOFAMP_STATUS *result;
+    NTSTATUS status;
+    WDFFILEOBJECT owner = WdfRequestGetFileObject(request);
+    if (inputBytes != 0 || outputBytes < sizeof(*result) ||
+        (code != IOCTL_SOFAMP_QUERY && code != IOCTL_SOFAMP_STOP &&
+         code != IOCTL_SOFAMP_START && code != IOCTL_SOFAMP_RENEW)) {
+        WdfRequestComplete(request, STATUS_INVALID_PARAMETER); return;
+    }
+    if ((code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_RENEW) &&
+        WdfRequestGetRequestorMode(request) != KernelMode) {
+        WdfRequestComplete(request, STATUS_ACCESS_DENIED); return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(request, sizeof(*result), (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
+    WdfWaitLockAcquire(c->Lock, NULL);
+    if (!c->State.Ready) { status = STATUS_DEVICE_NOT_READY; goto done; }
+    if (code == IOCTL_SOFAMP_START) {
+        LARGE_INTEGER delay;
+        // Match the board's sdmode-delay; the parent must establish valid,
+        // quiet clocks/data before asking for an amplifier lease.
+        delay.QuadPart = -(LONGLONG)SOFAMP_START_DELAY_MS * 10000;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        status = SofAmpStateStart(&c->State, device, owner);
+        SofAmpArmTimer(c);
+    } else if (code == IOCTL_SOFAMP_RENEW) {
+        status = SofAmpStateRenew(&c->State, device, owner);
+        SofAmpArmTimer(c);
+    } else if (code == IOCTL_SOFAMP_STOP) {
+        status = SofAmpStateOff(&c->State, device);
+    } else {
+        (VOID)SofAmpStateExpired(&c->State, device);
+        status = STATUS_SUCCESS; // Faults remain visible in the returned state.
+    }
+    SofAmpReport(device, c->State.Active ? 5 : 3,
+        c->State.Faulted ? c->State.FaultStatus : status);
+    if (NT_SUCCESS(status)) {
+        RtlZeroMemory(result, sizeof(*result));
+        result->Version = 1; result->Ready = c->State.Ready;
+        result->Active = c->State.Active; result->Faulted = c->State.Faulted;
+        result->OutputRequest = c->State.OutputRequest;
+        result->OnWrites = c->State.OnWrites; result->OffWrites = c->State.OffWrites;
+        result->WatchdogTrips = c->State.WatchdogTrips;
+        result->FaultStatus = (ULONG)c->State.FaultStatus;
+        result->CleanupStatus = (ULONG)c->State.CleanupStatus;
+        result->LeaseMs = SOFAMP_LEASE_MS; result->MaximumMs = SOFAMP_MAXIMUM_MS;
+        WdfRequestSetInformation(request, sizeof(*result));
+    }
+done:
+    WdfWaitLockRelease(c->Lock);
+    WdfRequestComplete(request, status);
 }
 
 NTSTATUS DriverEntry(PDRIVER_OBJECT object, PUNICODE_STRING path)
@@ -111,7 +219,12 @@ NTSTATUS SofAmpAdd(WDFDRIVER driver, PWDFDEVICE_INIT init)
 {
     WDF_PNPPOWER_EVENT_CALLBACKS callbacks;
     WDF_OBJECT_ATTRIBUTES attributes;
+    WDF_FILEOBJECT_CONFIG files;
+    WDF_IO_QUEUE_CONFIG queue;
+    WDF_TIMER_CONFIG timer;
     WDFDEVICE device;
+    SOFAMP_CONTEXT *c;
+    NTSTATUS status;
     UNREFERENCED_PARAMETER(driver);
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&callbacks);
     callbacks.EvtDevicePrepareHardware = SofAmpPrepare;
@@ -119,9 +232,29 @@ NTSTATUS SofAmpAdd(WDFDRIVER driver, PWDFDEVICE_INIT init)
     callbacks.EvtDeviceD0Entry = SofAmpEnter;
     callbacks.EvtDeviceD0Exit = SofAmpExit;
     WdfDeviceInitSetPnpPowerEventCallbacks(init, &callbacks);
+    WDF_FILEOBJECT_CONFIG_INIT(&files, WDF_NO_EVENT_CALLBACK, WDF_NO_EVENT_CALLBACK, SofAmpFileCleanup);
+    WdfDeviceInitSetFileObjectConfig(init, &files, WDF_NO_OBJECT_ATTRIBUTES);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, SOFAMP_CONTEXT);
     attributes.ExecutionLevel = WdfExecutionLevelPassive;
-    return WdfDeviceCreate(&init, &attributes, &device);
+    attributes.SynchronizationScope = WdfSynchronizationScopeNone;
+    status = WdfDeviceCreate(&init, &attributes, &device);
+    if (!NT_SUCCESS(status)) return status;
+    c = SofAmpContext(device);
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes); attributes.ParentObject = device;
+    status = WdfWaitLockCreate(&attributes, &c->Lock);
+    if (!NT_SUCCESS(status)) return status;
+    WDF_TIMER_CONFIG_INIT(&timer, SofAmpTimer);
+    timer.AutomaticSerialization = FALSE;
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = device;
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
+    status = WdfTimerCreate(&timer, &attributes, &c->Timer);
+    if (!NT_SUCCESS(status)) return status;
+    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queue, WdfIoQueueDispatchSequential);
+    queue.EvtIoDeviceControl = SofAmpControl;
+    status = WdfIoQueueCreate(device, &queue, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
+    if (!NT_SUCCESS(status)) return status;
+    return WdfDeviceCreateDeviceInterface(device, &SofAmpInterfaceGuid, NULL);
 }
 
 NTSTATUS SofAmpPrepare(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST translated)
@@ -132,7 +265,7 @@ NTSTATUS SofAmpPrepare(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST translat
     UNREFERENCED_PARAMETER(raw);
     context->Validated = FALSE;
     context->Connection.QuadPart = 0;
-    context->OffWrites = 0;
+    RtlZeroMemory(&context->State, sizeof(context->State));
     SofAmpReport(device, 1, STATUS_PENDING);
     for (i = 0; i < WdfCmResourceListGetCount(translated); ++i) {
         PCM_PARTIAL_RESOURCE_DESCRIPTOR r = WdfCmResourceListGetDescriptor(translated, i);
@@ -182,7 +315,8 @@ NTSTATUS SofAmpEnter(WDFDEVICE device, WDF_POWER_DEVICE_STATE previous)
             goto finish;
         }
     }
-    status = SofAmpWriteOff(device);
+    status = SofAmpStateOff(&context->State, device);
+    context->State.Ready = NT_SUCCESS(status);
 finish:
     // Failed D0Entry is followed by ReleaseHardware, not D0Exit. Release
     // closes any open target. Failure is never reported as physical shutdown.
@@ -192,10 +326,16 @@ finish:
 
 NTSTATUS SofAmpExit(WDFDEVICE device, WDF_POWER_DEVICE_STATE target)
 {
+    SOFAMP_CONTEXT *c = SofAmpContext(device);
     NTSTATUS status;
     UNREFERENCED_PARAMETER(target);
-    status = SofAmpWriteOff(device);
+    WdfWaitLockAcquire(c->Lock, NULL);
+    c->State.Ready = FALSE;
+    status = SofAmpStateOff(&c->State, device);
     SofAmpReport(device, 4, status);
+    WdfWaitLockRelease(c->Lock);
+    // Never wait for a callback while holding the lock it needs.
+    WdfTimerStop(c->Timer, TRUE);
     return status;
 }
 
@@ -211,5 +351,8 @@ NTSTATUS SofAmpRelease(WDFDEVICE device, WDFCMRESLIST resources)
         context->Gpio = NULL;
     }
     context->Validated = FALSE;
+    context->State.Ready = context->State.Active = FALSE;
+    context->State.Owner = NULL;
+    context->State.OutputRequest = SOFAMP_OUTPUT_UNKNOWN;
     return STATUS_SUCCESS;
 }

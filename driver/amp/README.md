@@ -1,57 +1,65 @@
-# PUJJOTEEN amplifier shutdown-only prototype
+# PUJJOTEEN guarded amplifier control
 
-This development package is for investigating the reported speaker overheating.
-It is **not a playback driver or a verified thermal repair**. Do not install the
-older automatic-playback ACX packages to make its ACPI child enumerate.
+`sofamp` binds to `ACPI\MX98360A` on the reviewed PUJJOTEEN board. It validates
+exactly one translated GPIO connection and the captured 42-byte `_CRS`:
+exclusive output-only pin 75 on `\_SB.PCI0.GPIO`. No guessed resource IDs or raw
+pad-register writes are used. Its default is EN low on D0 entry and exit.
 
-`sofamp` binds to `ACPI\MX98360A`. Before opening GPIO it requires exactly one
-translated GPIO I/O connection and compares the evaluated `_CRS` against the
-42-byte resource captured from this target: exclusive output-only pin 75 on
-`\_SB.PCI0.GPIO`. A different resource, malformed ACPI reply, or failed query
-rejects startup. The connection ID comes from PnP; no physical GPIO registers or
-guessed resource-hub IDs are used.
+The original shutdown-only driver is recorded in
+[the thermal investigation](../../docs/n100-amplifier-thermal-review.md). The
+current source adds a diagnostic control interface and production-tested state
+machine. It is **not a demonstrated repair of the speakers or a temperature
+monitor**. No ordinary speaker playback is enabled by installing this package;
+the parent still holds SSP1 speaker playback. Headphones use their separate path.
 
-The driver opens that connection for output and requests **zero only** on D0
-entry and exit. It retains the connection until resource release. It exposes no
-user command interface and contains no operation to raise EN. GPIO requests have
-a two-second timeout. Start failure is reported as failure, not successful
-shutdown. Surprise removal releases handles without issuing another GPIO write.
+## Guarded operations
 
-`SofAmpStage`, `SofAmpStatus`, and `SofAmpOffWrites` are recorded in the device's
-hardware registry key when available, and in kernel debug output. Stages are
-1 = resource discovery begun, 2 = validation finished, 3 = entry/open/off result,
-4 = exit/off result. Counts reset on PrepareHardware. A successful GPIO completion
-records that the controller accepted a low-output request; its echoed buffer is
-**not independent electrical readback**. GPIO state after target close, controller
-power transition, or firmware restart is not established by this package.
+- QUERY and STOP are administrator diagnostics. QUERY reports state and latched
+  faults; STOP requests EN low and releases stream ownership.
+- START and RENEW reject user-mode requests, including administrator callers.
+  Only a kernel client may request them. START waits the board's 5 ms delay;
+  the caller must establish valid, quiet clocks/data first.
+- START takes ownership of the caller's file and grants a 100 ms software
+  lease. Renewal can extend that lease, but never past 250 ms from START in
+  this diagnostic revision. Repeated START cannot extend an active lease.
+- Expiration, owner-file cleanup, explicit STOP and D0 exit request shutdown.
+  Closing a query handle does not interrupt another owner's lease.
+- Transfer failures or expired leases latch a fault and block further enables
+  until a device restart. A failed enable still attempts shutdown. A failed
+  shutdown reports output state unknown, not off. Successful later STOP does
+  not clear the fault.
 
-The accompanying ACX source now holds playback: D0 entry reports startup stage 7,
-`ThermalHold = 1`, and `HardwareReady = 0`, without booting firmware or configuring
-SSP. It returns PnP success to permit amplifier-child enumeration. There is no
-registry override or IOCTL to lift the hold. The old startup helper remains in
-source for review but has no callers. Stream preparation fails while held.
+An explicit passive wait lock serializes GPIO, request, file and timer state.
+The passive one-shot timer is rearmed on renewal; an already queued early
+callback rechecks the current deadline. Timer draining occurs outside the lock.
+GPIO requests have a 100 ms timeout. These are **software deadlines**, not
+independent electrical cutoff: scheduler delays, GPIO failure, a hung kernel,
+and physical faults can defeat timely shutdown. The 250 ms budget is not a
+certified maximum powered time or safe energy limit.
 
-Build with the WDK using `msbuild driver/amp/sofamp.vcxproj /m
-/p:Configuration=Debug /p:Platform=x64`; CI independently runs InfVerif. Run
-`python3 tools/test-amp-hold.py` for sanitizer-backed resource rejection and the
-production held D0 callback. These checks do not exercise GpioClx on the target.
+`OutputRequest` values are 0=unknown, 1=accepted low request, 2=accepted high
+request. The GPIO reply echoes the requested bit; none of these values measures
+pin voltage, amplifier temperature, speaker current or coil resistance.
+Diagnostics expose accepted on/off counts, watchdog trips and separate fault and
+cleanup statuses. Surprise removal closes resources without assuming GPIO is
+still accessible or that the output retains its previous level.
 
-The first controlled maintenance installation succeeded on 2026-10-14. The held
-ACX package is `oem26.inf`, version `1.26.8.27`; the shutdown-only amplifier
-package is `oem27.inf`, version `1.27.25.292`. The parent is enabled with playback
-held, allowing the amplifier child to own its GPIO. Readback showed stage 7,
-ThermalHold 1, HardwareReady 0, no stream runs, HDA DMA stopped, and DSP ADSPCS
-`0x00000F0F`. The amplifier reported stage 3, status 0, and one accepted off write.
-Both devices reported OK, and both Windows audio services remained stopped.
-There was no reboot or playback test. This verifies GPIO resource ownership and
-an accepted shutdown request, not physical output voltage, temperature, speaker
-integrity, or boot/suspend behavior. Do not replace the held ACX package with an
-older package that automatically starts firmware/playback.
+## Validation and activation
 
-Before playback can return, implement and verify the full amplifier lifecycle
-and investigate the remaining distorted signal/thermal cause. Lowering EN is not
-by itself evidence that the prior heating cause is corrected.
+`python3 tools/test-amp-lifecycle.py` compiles the actual state machine and
+request/timer/cleanup callbacks with ASan/UBSan. It checks user-mode enable
+rejection, ownership, late/slow/failed GPIO operations, expiration, renewal
+limits, stale timer callbacks, and shutdown failure reporting.
+`python3 tools/test-amp-hold.py` checks exact resource rejection and the parent's
+held D0 callback. CI builds with the WDK and independently verifies the INF.
+These tests do not measure the physical GPIO or prove a thermal repair.
 
-References: [Windows GPIO resource connection](https://learn.microsoft.com/en-us/windows-hardware/drivers/gpio/connecting-a-kmdf-driver-to-gpio-i-o-pins),
+A supervised powered speaker diagnostic needs a separately reviewed kernel
+caller, fixed low-level PCM, valid SSP1 configuration, and independent user
+observation for heat. Do not reinstall an old automatic-playback parent or use
+an unbounded GPIO toggle to bypass this process.
+
+References: [Linux MAX98357A/MAX98360A lifecycle](https://github.com/torvalds/linux/blob/v6.8/sound/soc/codecs/max98357a.c),
 [GPIO write contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/gpio/ni-gpio-ioctl_gpio_write_pins),
-and [target investigation](../../docs/n100-amplifier-thermal-review.md).
+[requestor-mode check](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdfrequest/nf-wdfrequest-wdfrequestgetrequestormode),
+[WDF timers](https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/using-timers).
