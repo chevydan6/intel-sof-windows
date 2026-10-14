@@ -12,6 +12,7 @@ on:
       - 'driver/sofprobe-ioctl.h'
       - 'tools/test-audio-format.py'
       - 'tools/test-acx-ring.py'
+      - 'tools/test-acx-packet-lifetime.py'
       - 'tools/test-amp-hold.py'
       - 'tools/test-headphone-pipeline.py'
       - 'tools/test-pcm-guard.py'
@@ -30,6 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 tools/test-audio-format.py
       - run: python3 tools/test-acx-ring.py
+      - run: python3 tools/test-acx-packet-lifetime.py
       - run: python3 tools/test-amp-hold.py
       - run: python3 tools/test-headphone-pipeline.py
       - run: python3 tools/test-pcm-guard.py

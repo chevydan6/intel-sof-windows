@@ -44,3 +44,32 @@ before treating this playback path as validated.
 The timer design follows Microsoft's [passive timer requirements](https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/using-timers)
 and [timer stop constraints](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdftimer/nf-wdftimer-wdftimerstop).
 Timer draining occurs outside the callback's power lock to avoid deadlock.
+
+## Initial hardware result and cleanup correction
+
+Source `6aa5a40` passed WDK/INF verification in run `38566704222`. The preview
+installed as oem55.inf, 12.49.9.42, with firmware/DMA/amp off and phase Unarmed.
+The first dry application test crashed Windows before a ring snapshot was
+saved. No powered arm was requested. Windows automatically restarted; this
+was initially mistaken for a stale SSH connection until Event 1001 confirmed
+bugcheck 0x1A/0x1230. The known-good headphone package oem54.inf 11.0.0.373 was
+restored and audio services restarted. Amplifier status after recovery was off
+with zero enables and no faults; that post-reboot count alone is not evidence
+about pre-crash state. The dry request is the basis for saying no powered test
+was requested.
+
+Microsoft CDB traced the crash through `MiUnmapLockedPagesInUserSpace`,
+`MmUnmapLockedPages`, `Acx::AfxRtStream::UnmapMdls`, and ACX's post-cleanup
+callback. The shared driver cleanup callback was freeing packet MDLs before
+this ACX post-cleanup step. Atomic ownership had prevented a second free, but
+did not preserve the MDLs while ACX still had user mappings. Removed packet
+freeing from the early cleanup callback: successfully published allocations
+now belong to `EvtFreePackets`, while allocation failures still free their
+unpublished buffers locally. A regression test fails on the old implementation
+and passes with both cleanup/free callback orders after the correction.
+
+The kernel dump and debugger output are private under ignored
+`build/speaker-repair/right-preview-6aa5a40/`. The full dump's local and Windows
+SHA-256 values match. The correction requires a new WDK build and another dry
+hardware test; neither audible application playback nor sustained speaker
+operation has been validated yet.

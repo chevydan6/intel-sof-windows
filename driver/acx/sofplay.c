@@ -363,20 +363,14 @@ SofPlayEvtStreamCleanup(_In_ WDFOBJECT Object)
 {
     PSOFPLAY_STREAM_CONTEXT context =
         SofPlayGetStreamContext((ACXSTREAM)Object);
-    PACX_RTPACKET packets;
-    ULONG packetCount;
     if (context->Timer != NULL)
         WdfTimerStop(context->Timer, TRUE);
     if (context->Device != NULL)
         SofProbeAcxSetTimer(context->Device, NULL);
-    packets = (PACX_RTPACKET)InterlockedExchangePointer(
-        (PVOID volatile *)&context->Packets, NULL);
-    if (packets != NULL) {
-        packetCount = context->PacketCount;
-        context->PacketCount = 0;
-        context->PacketSize = 0;
-        SofPlayReleasePacketMemory(packets, packetCount);
-    }
+    // ACX's post-cleanup callback still owns user mappings of these MDLs.
+    // Freeing here invalidates them before AfxRtStream::UnmapMdls runs.
+    // Only EvtFreePackets releases successfully published packet allocations;
+    // the allocation-failure path releases its own unpublished buffers.
     if (context->Device != NULL) SofProbeAcxReleaseStream(context->Device);
 }
 
