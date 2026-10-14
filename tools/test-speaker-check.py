@@ -47,6 +47,7 @@ typedef uint32_t *PULONG;typedef struct {int64_t QuadPart;} LARGE_INTEGER;
 #define READ_REGISTER_UCHAR(p) (*(p))
 #define READ_REGISTER_ULONG(p) (*(p))
 #define WRITE_REGISTER_UCHAR(p,v) (*(p)=(v))
+#define KeMemoryBarrier() ((void)0)
 typedef struct {uint8_t *ToneHda;BOOLEAN ToneDmaRunning;} CONTEXT,*PSOFPROBE_DEVICE_CONTEXT;
 typedef struct {ULONG Bytes,Reserved,Command;} CAPTURE,*PSOFMIC_CAPTURE_RESULT;
 typedef struct {ULONG OnWrites;} SOFAMP_STATUS;
@@ -71,15 +72,21 @@ int main(void){
   int64_t sum=0;
   SofSpeakerFillTestSamples(pcm,6144,ch);
   for(ULONG i=0;i<6144;i++){
-   assert(pcm[2*i+1-ch]==0);assert(llabs(pcm[2*i+ch])<=8388608);
+   assert(pcm[2*i+1-ch]==0);assert(llabs(pcm[2*i+ch])<=16777216);
    assert(pcm[2*i+ch]==pcm[2*(i%48)+ch]);sum+=pcm[2*i+ch];
   }
   assert(sum==0);
+  assert(SofSpeakerTestSamplesValid(pcm,6144,ch));
+  pcm[6143*2+1-ch]=1;
+  assert(!SofSpeakerTestSamplesValid(pcm,6144,ch));
+  SofSpeakerFillTestSamples(pcm,6144,ch);pcm[22]=0x7fffffff;
+  assert(!SofSpeakerTestSamplesValid(pcm,6144,ch));
  }
  _Alignas(8) uint8_t registers[0x200]={0};CONTEXT ctx={registers,1};
  *(PULONG)(registers+0x164)=384;
  for(ULONG mode=0;mode<=4;mode++){
-  SOFSPEAKER_CHECK t={.Mode=mode,.Amp=&ctx,.InitialOnWrites=3};CAPTURE r={0};
+  SofSpeakerFillTestSamples(pcm,6144,(mode-1)&1);
+  SOFSPEAKER_CHECK t={.Mode=mode,.Amp=&ctx,.InitialOnWrites=3,.Samples=pcm};CAPTURE r={0};
   starts=stops=0;now=10000000;
   r.Bytes=48000*8-8;assert(SofSpeakerTick(&ctx,&t,&r)==0 && !starts);
   r.Bytes=48000*8;assert(SofSpeakerTick(&ctx,&t,&r)==0);
@@ -91,7 +98,8 @@ int main(void){
   }else assert(starts==0 && stops==0);
  }
  for(int fault=0;fault<3;fault++){
-  SOFSPEAKER_CHECK t={.Mode=3,.Amp=&ctx,.Configured=1,.Triggered=1};CAPTURE r={.Bytes=48000*8};
+  SofSpeakerFillTestSamples(pcm,6144,0);
+  SOFSPEAKER_CHECK t={.Mode=3,.Amp=&ctx,.Configured=1,.Triggered=1,.Samples=pcm};CAPTURE r={.Bytes=48000*8};
   starts=stops=closed=ipcs=sequence=0;ctx.ToneDmaRunning=1;
   failStart=fault==1;failStop=fault==2;now=10000000;
   NTSTATUS start=SofSpeakerTick(&ctx,&t,&r);assert((start==0)==!failStart);
@@ -99,6 +107,10 @@ int main(void){
   assert((stop==0)==!failStop && stops==1 && closed==1 && ipcs==1);
   assert(offOrder<ipcOrder && !t.Amp && !ctx.ToneDmaRunning);
  }
+ // A corrupted/cleared ring must never reach amplifier enable.
+ failStart=failStop=0;starts=0;memset(pcm,0,sizeof(pcm));
+ SOFSPEAKER_CHECK bad={.Mode=3,.Amp=&ctx,.Samples=pcm};CAPTURE badResult={.Bytes=48000*8};
+ assert(SofSpeakerTick(&ctx,&bad,&badResult)==STATUS_DEVICE_DATA_ERROR && starts==0);
  puts("PASS: speaker SSP1/S32 ABI, channel isolation, fixed low signal, dry mode, one pulse, and shutdown-before-IPC cleanup");
 }
 '''

@@ -9,6 +9,7 @@ typedef struct {
     BOOLEAN Configured, Triggered, Checked, Pulsed, Stopped;
     ULONG Mode, InitialOnWrites, InitialPosition;
     ULONGLONG PulseStart;
+    const LONG *Samples;
 } SOFSPEAKER_CHECK;
 
 static NTSTATUS
@@ -109,6 +110,7 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
     }
     SofSpeakerFillTestSamples((LONG *)ring, SOFPROBE_TONE_BYTES / 8,
                              (test->Mode - 1) & 1);
+    test->Samples = (const LONG *)ring;
     KeMemoryBarrier();
     table = WdfCommonBufferGetAlignedLogicalAddress(c->TonePageTable);
     pcm[6]=84; pcm[8]=table.LowPart; pcm[9]=12; pcm[10]=SOFPROBE_TONE_BYTES;
@@ -117,6 +119,10 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
     test->Configured = TRUE; // Ambiguous reply still needs cleanup.
     status = SofMicIpc(c, pcm, result);
     if (!NT_SUCCESS(status)) return status;
+    KeMemoryBarrier();
+    if (!SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8,
+                                   (test->Mode - 1) & 1))
+        return STATUS_DEVICE_DATA_ERROR;
     c->TonePcmConfigured = TRUE;
     status = SofProbeToneHardware(c, &tone, 1);
     if (!NT_SUCCESS(status) || tone.Result) return NT_SUCCESS(status) ? STATUS_DEVICE_DATA_ERROR : status;
@@ -140,7 +146,11 @@ SofSpeakerTick(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTU
         ULONG pos = READ_REGISTER_ULONG((PULONG)(c->ToneHda + 0x164));
         if (pos >= SOFPROBE_TONE_BYTES || pos == test->InitialPosition)
             return STATUS_DEVICE_DATA_ERROR;
-        test->Checked = TRUE; result->Reserved |= 0x400;
+        KeMemoryBarrier();
+        if (!SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8,
+                                       (test->Mode - 1) & 1))
+            return STATUS_DEVICE_DATA_ERROR;
+        test->Checked = TRUE; result->Reserved |= 0xC00;
         if (test->Mode >= 3) {
             test->PulseStart = KeQueryInterruptTime();
             status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_START, &state);

@@ -64,7 +64,7 @@ try {
  for($i=0;$i -lt 16;$i++){$w[$i]=[BitConverter]::ToUInt32($bytes,$i*4)}
  $r=[ordered]@{Version=$w[0];Stage=$w[1];Status=('0x{0:X8}' -f $w[2]);CleanupStatus=('0x{0:X8}' -f $w[3]);Bytes=$w[4];Position=$w[5];HdaStatus=('0x{0:X2}' -f $w[6]);ReplyError=('0x{0:X8}' -f $w[7]);Command=('0x{0:X8}' -f $w[8]);Component=$w[9];MaxPollUs=$w[10];ElapsedMs=$w[11];Rate=$w[12];Channels=$w[13];Bits=$w[14];SpeakerFlags=('0x{0:X8}' -f $w[15]);Channel=$Channel;Pulse=[bool]$Pulse}
  $r | ConvertTo-Json | Tee-Object -FilePath ($Output+'.json') | Write-Host
- $expectedFlags=$mode -bor $(if($Pulse){0x700}else{0x400})
+ $expectedFlags=$mode -bor $(if($Pulse){0xF00}else{0xC00})
  if($w[15] -ne $expectedFlags){throw 'The requested speaker diagnostic did not finish'}
  if($w[0] -ne 2 -or $w[2] -ne 0 -or $w[3] -ne 0 -or $w[4] -ne 1920000 -or $bytes.Length -ne 1920064 -or $w[12] -ne 48000 -or $w[13] -ne 2 -or $w[14] -ne 32){throw 'Microphone capture failed; see JSON diagnostics'}
  $f=[IO.File]::Create($Output);$bw=New-Object IO.BinaryWriter($f)

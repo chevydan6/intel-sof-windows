@@ -31,7 +31,7 @@ or speaker test. A verified parent restart is required afterward.
 It mutes the headphone codec, releases its idle PCM, and builds a separate SSP1
 S32 graph using IDs 20/22/24/25, distinct from the DMIC graph. The fixed format
 matches the topology: 48 kHz, I2S, 3.072 MHz BCLK, stereo 32-bit slots and
-19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -48.16 dBFS peak;
+19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -42.14 dBFS peak;
 the other channel is exactly zero. The ring holds an exact integer number of
 cycles. No arbitrary frequency, sample data, amplitude or enable duration is
 accepted from applications.
@@ -46,7 +46,8 @@ Cleanup requests amp off before IPC/DMA waits, closes the ownership handle,
 stops capture/output and retains buffers on ambiguous DMA cleanup.
 
 The response uses the existing bounded microphone result storage with version 2.
-The last header word contains mode 1..4 plus flags: `0x400` output DMA advanced,
+The last header word contains mode 1..4 plus flags: `0x800` host ring contents
+verified immediately before enable, `0x400` output DMA advanced,
 `0x100` enable accepted, `0x200` explicit stop accepted. The general ACX status
 clears HeadphoneOnly/ThermalHold after a speaker test is attempted, so diagnostics
 do not falsely report an unchanged speaker hold while this explicit path runs.
@@ -90,3 +91,16 @@ The fresh amplifier query after restoration reported ready=1, active=0,
 output-low accepted and no faults. Its counters had reset to on=0/off=1;
 these counters are scoped to a hardware preparation, not a persistent test
 history. The saved pre-restart pulse result preserves the one-enable evidence.
+
+The user subsequently confirmed the left speaker area stayed cool. The same
+original -48.16 dBFS right-channel test returned flags `0x704`, full capture,
+zero status/cleanup errors and no amplifier faults/watchdog trips. The user
+also confirmed it stayed cool. Its recorded 1 kHz component around the expected
+pulse was approximately -88/-83 dBFS, still insufficient to assess distortion.
+
+The next diagnostic raises only the fixed sample amplitude by 6.02 dB to
+-42.14 dBFS, retaining the 40 ms stop and unchanged amplifier watchdog. It
+checks the full host ring against the channel-specific test signal after PCM
+preparation and again before requesting amplifier enable. Corrupt or cleared
+samples abort with the amplifier off; host tests inject both conditions.
+This check does not establish the physical SSP waveform or speaker condition.
