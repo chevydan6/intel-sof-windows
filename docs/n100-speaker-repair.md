@@ -211,3 +211,23 @@ comparison alone does not establish safety for damaged hardware or continuous
 playback. If the stronger right pulse remains inaudible, do not continue
 raising its level; obtain a different acoustic/electrical or known-driver
 comparison instead. Continuous speaker playback remains disabled.
+
+Source `7e3c4ec` passed build 38538475724 and installed as `oem50.inf`, version
+`8.54.47.948`. One right pulse completed with flags `0xF04`, full capture,
+zero status/cleanup errors and verified amplifier-off/DSP cleanup. Both firmware
+position records were valid host records (DAI-valid remained clear). The
+right tone now measured -60.4/-54.7 dBFS around 1.05 s, 32/39 dB above the
+largest pre-test 1 kHz component, and about 12.3/13.1 dB above the previous
+right test. The recording did not reach digital full scale.
+
+A 20 ms, 1 kHz fit on microphone 2 shows a broadly sinusoidal waveform without
+obvious flat-topped clipping; fitted second-through-fifth harmonics total about
+1.63% and the remaining broadband residual is about 18.2% of fundamental RMS.
+These are short acoustic-chain observations, including microphone, placement,
+room and noise. They are not calibrated amplifier THD, a musical playback test,
+or thermal clearance. Waveform/recording artifacts remain private in build.
+The user's hearing/temperature observation for this final pulse is pending.
+Headphone services have been restored, with the amplifier reporting off and
+no faults. If it is again inaudible, a separately placed Ubuntu microphone
+(previously authorized by the user) could distinguish an acoustic tone from
+coupling into the Lenovo's built-in microphone; do not raise the source level.
