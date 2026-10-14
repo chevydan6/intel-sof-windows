@@ -551,3 +551,27 @@ contributors. The software uses the same sample values and gain for both
 channels. Asked the user whether the left was noticeably quieter; response
 pending. Do not infer speaker damage or treat the entire speaker repair as
 complete. Sustained normal playback is still held and unvalidated.
+
+
+The user subsequently confirmed the left speaker did sound quieter. The
+imbalance is therefore also a listening observation. Review of the diagnostic
+confirms shared generated samples and the same amplitude multiplier for both
+channels; its graph contains host, buffer and DAI components without a separate
+left gain stage. The reviewed board DSP configuration has source/sink only and
+the board speaker curve applies a common maximum, not a left-specific reduction.
+This does not verify the actual signal at the physical SSP pins.
+
+The [manufacturer's amplifier documentation](https://www.analog.com/media/en/technical-documentation/data-sheets/MAX98360A-MAX98360D.pdf)
+describes hardware-pin-selected gain and channel wiring, not a readable
+per-channel software gain register. The documented range of possible gain
+straps must not be mistaken for this board's measured gain or evidence of a
+faulty strap. Actual board wiring and speaker condition remain unverified.
+
+Prepared two original two-second left/right WAV files under ignored
+`build/speaker-repair/fedora-speaker-comparison/`, using the exact listening
+sample array at -12.04 dBFS with 10 ms playback-boundary fades. Verified matching
+active-channel samples, silent opposite channels, duration/format and peak.
+No Linux boot or additional powered playback occurred. Asked whether the Fedora
+USB is available: a same-level left/right comparison with its existing driver
+will help distinguish a Windows-specific issue from a persistent hardware or
+acoustic imbalance. Windows amplifier remains off and headphones restored.
