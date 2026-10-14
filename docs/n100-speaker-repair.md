@@ -31,7 +31,7 @@ or speaker test. A verified parent restart is required afterward.
 It mutes the headphone codec, releases its idle PCM, and builds a separate SSP1
 S32 graph using IDs 20/22/24/25, distinct from the DMIC graph. The fixed format
 matches the topology: 48 kHz, I2S, 3.072 MHz BCLK, stereo 32-bit slots and
-19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -18.06 dBFS peak;
+19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -15.10 dBFS peak;
 the other channel is exactly zero. The ring holds an exact integer number of
 cycles. No arbitrary frequency, sample data, amplitude or enable duration is
 accepted from applications.
@@ -226,8 +226,51 @@ obvious flat-topped clipping; fitted second-through-fifth harmonics total about
 These are short acoustic-chain observations, including microphone, placement,
 room and noise. They are not calibrated amplifier THD, a musical playback test,
 or thermal clearance. Waveform/recording artifacts remain private in build.
-The user's hearing/temperature observation for this final pulse is pending.
+The user subsequently reported that the speakers remained cool and no pulse
+was audible. Do not increase the source amplitude further.
 Headphone services have been restored, with the amplifier reporting off and
 no faults. If it is again inaudible, a separately placed Ubuntu microphone
 (previously authorized by the user) could distinguish an acoustic tone from
 coupling into the Lenovo's built-in microphone; do not raise the source level.
+
+After the user placed the laptops together, an independent Ubuntu internal-mic
+recording captured one further right pulse at the same -18.06 dBFS level.
+Ubuntu's initial microphone volume was 1.00 and baseline captures clipped;
+volume 0.025 produced a baseline without clipping and was used for the test.
+The original microphone volume was restored afterward. No speaker gain or
+driver changes were made.
+
+The 13.16-second external recording contains a distinct 1 kHz burst at 7.415 s,
+measuring -81.35/-89.31 dBFS, 22.16/14.63 dB above the largest corresponding
+component in its first two seconds. Neither external channel clipped. This
+supports actual acoustic output rather than pickup confined to the Lenovo's
+internal microphone circuitry. It does not establish useful playback loudness,
+speaker condition, calibrated sound pressure, or safety for continuous output.
+The simultaneous Lenovo capture completed with flags `0xF04`, full data and
+zero status/cleanup errors. Its tone peaked around 1.07 s.
+
+The saved pre-restart amplifier status shows exactly one enable, inactive state,
+an accepted off request, zero faults and zero watchdog trips. Cleanup verified
+DSP shutdown; headphone audio services were then restored. User temperature
+feedback for this repeat pulse is pending. All recordings and analysis remain
+private in the ignored build directory; no further level increase is planned.
+
+
+## Independent control recording and small level steps
+
+The user confirmed the right pulse left the speakers cool. An amplifier-off
+right-channel control then completed with flags `0xC02`, zero enable writes,
+full capture, and zero status/cleanup errors. The external microphone's largest
+1 kHz components, excluding recording boundaries, were -108.26/-109.22 dBFS;
+the preceding pulse was 26.91/19.92 dB higher. This supports an amplifier-dependent
+sound, without proving calibrated acoustic gain or the condition of the coils.
+Headphone services and the Ubuntu input volume were restored after the control.
+
+After this independent check, the user explicitly requested continued tests
+with gradual sound-level increases and distortion monitoring. The next fixed
+build uses a 45/256 full-scale peak (-15.10 dBFS), a 2.96 dB step from 32/256.
+It preserves the nominal 40 ms pulse, amplifier lease, channel isolation,
+shutdown verification, and headphone-only normal playback. Further powered
+steps depend on the recorded result and physical temperature feedback; this
+is not approval for unattended continuous speaker playback. No thermal safety
+or clean musical playback is established by a short sine recording.
