@@ -516,3 +516,19 @@ recording clips after the known Ubuntu startup transient is excluded. This
 only establishes recorder headroom, not absence of speaker distortion.
 The user reports that it sounds fine. Current post-test temperature feedback
 is pending before the prepared +6.02 dB step; no louder powered test occurred.
+
+
+The user confirmed both speakers remained cool, then the right-channel test
+ran at the next fixed level (-12.04 dBFS peak, +6.02 dB) for two seconds.
+Flags `0x1F0A`, full capture, zero capture/cleanup errors and saved amplifier
+status verify one enable, successful stop, no fault and no watchdog trip.
+The internal recording's detected note span is 1.990/1.995 seconds. Neither
+internal nor external capture clips after the startup transient is excluded.
+Internal note-band levels increased by about 4.6-6.6 dB between tests, broadly
+consistent with the source step. External level changes vary by channel and
+frequency (-0.5 to +5.0 dB), so those recordings do not support a calibrated
+level or distortion comparison. The user reports clear sound at the higher
+level. Amplifier off, headphone services restored and Ubuntu input gain 1.00
+were verified. Post-test temperature feedback remains pending; the next
+controlled check is the left speaker at this level, not another right-side
+increase. Short successful tests do not establish sustained-playback safety.
