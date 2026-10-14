@@ -600,3 +600,107 @@ through SSH and the USB safely powered off. Physical Lenovo boot, network
 connection and speaker comparison remain pending. Receipts and setup files
 are local under Downloads/fedora-lxqt; the previous installer backup is under
 windows-lenovo/usb-backup-before-fedora-20261014.
+
+
+Physical Fedora comparison completed on 2026-10-14. SSH connected to the
+Lenovo live session at 192.168.1.166. SOF_TESTS was already mounted by the
+desktop under `/run/media/liveuser/SOF_TESTS`; the files were intact. The
+temporary public-file HTTP connection helper was stopped after SSH access
+was verified. Windows partitions remained unmounted.
+
+Fedora 44 / kernel 6.19.10-300.fc44 loaded SOF IPC3 firmware 2:2:0-57864
+and `sof-adl-max98360a-rt5682.tplg`. Its desktop showed Dummy Output, with
+no sof-rt5682 UCM profile found in the installed configuration. Direct ALSA
+speaker playback (`hw:0,0`, S32_LE stereo, 48 kHz) and built-in microphone
+capture (`hw:0,99`, S32_LE four channels, 48 kHz) both worked. Boot-time
+errors for other PCM paths did not prevent these tests. Desktop audio
+profile repair remains separate and was not completed.
+
+Played the matching -12.04 dBFS two-second WAV once on the right and once
+on the left, with equal 0 dB speaker PGA controls. Both playback commands
+exited successfully after approximately 2.013 seconds. Each was recorded
+for six seconds by the Lenovo microphones; an independent Ubuntu recording
+also covers the comparison. The Spk switch was turned off after each test
+and again during cleanup. Final reads verified Spk off and both ALSA PCM
+handles closed. Ubuntu microphone gain was restored to 1.00. There were
+no new kernel errors associated with these tests.
+
+The two responsive Lenovo microphone channels measured the left test
+15.8-18.4 dB below the right in the 750/1000 Hz bands. Both signals were
+above the measured background and neither responsive channel clipped.
+Capture channels 3/4 were not useful microphone signals and are excluded
+from this comparison. The user independently reported "left quieter,
+both cool." This reproduces the imbalance using Linux's existing driver,
+so a fault specific to the Windows diagnostic is less likely. It does
+not distinguish speaker/connection/amplifier issues from acoustic effects,
+prove permanent speaker damage, or establish the cause of the earlier heat.
+Do not compensate by raising the weak channel or call sustained Windows
+speaker playback repaired on the basis of these short tests.
+
+Private recordings, scripts, analysis and state snapshots are under ignored
+`build/speaker-repair/fedora-live-20261014/`. No further powered tests were
+run. A physical channel/speaker comparison would be needed to narrow a
+hardware fault; no chassis opening or connector swapping was performed.
+
+The user then requested normal Fedora playback to assess possible speaker
+damage. Selected the existing Pro Audio card profile and made its verified
+speaker PCM `hw:0,0` the default output, unmuted at 25% desktop volume, with
+Spk enabled. PipeWire opened that PCM at S32_LE stereo / 48 kHz. This resolves
+access to normal playback for this live session without installing a UCM
+profile or changing Windows. User listening results are pending. The earlier
+Spk-off status applies to the completed bounded tests; normal Fedora playback
+is now enabled intentionally at the user's request.
+
+The user reported no normal playback after that setup. Initial inspection
+found no browser playback stream, only volume-control monitor streams; the
+earlier readiness statement had verified the PCM but not browser playback.
+Added a liveuser WirePlumber rule in the live session to name PCM0 "Lenovo
+Speakers", map its channels explicitly to FL/FR, select S32_LE / 48 kHz,
+and hide unused Pro Audio endpoints that were producing parameter errors.
+Kept the four-channel DMIC endpoint. Restarted WirePlumber and verified an
+active Falkon stream linked FL-to-FL and FR-to-FR on the speaker sink. Set
+desktop volume to 50%; a later read showed 100% after user interaction, which
+was not overridden. The speaker switch remained on, and ALSA confirmed the
+requested format and channels. These observations do not isolate whether the
+initial silence was due to missing browser audio, routing, or low volume.
+
+A four-second raw microphone capture succeeded with nonzero signals in the
+two responsive channels (approximately -55/-53 dBFS AC RMS). It is saved
+privately with the live-session rule under the existing ignored evidence
+directory. A preceding WAV capture failed at container opening and supplied
+no usable evidence. User confirmation of audible browser playback remains
+pending; the changed routing is verified, not a completed speaker repair.
+
+The user subsequently confirmed normal Fedora playback: the right sounds
+fine, while the left sounds damaged. This supports a left-side hardware-path
+problem but does not distinguish the transducer from its connection or amp.
+The user agreed to use the right speaker as the reference for subsequent
+Windows driver testing. Changed the diagnostic helper's default channel to
+Right; the existing explicit channel selection and amplifier guards remain.
+No boost or compensation for the weak left channel is planned. The Lenovo
+was still running Fedora at preparation time, so Windows hardware testing
+awaits the user's return to Windows. No reboot was initiated remotely.
+
+After the user returned to Windows, reconnected and verified the existing
+parent 11.0.0.373 / oem54.inf and amplifier ABI v2 (100 ms lease, 2200 ms
+listen ceiling), initially inactive with no faults. Deployed the updated
+right-default helper. Stopped audio services and restarted the audio device,
+then ran one right-channel dry listening check and one powered two-second
+check at -12.04 dBFS. Results were respectively 0xC0C and 0x1F0A, with full
+1,920,000-byte microphone captures and zero capture/cleanup errors. The
+powered pre-reset amplifier snapshot records exactly one enable, explicit
+off, no faults and no watchdog trips. Both microphone channels had zero
+clipped samples. Restored audio services and verified the amplifier off.
+The user confirmed clear sound and both speakers cool. Private evidence is
+under `build/speaker-repair/windows-right-reference-20261014/`.
+
+Review of normal playback confirms that this successful diagnostic does not
+enable a normal speaker endpoint. The installed ACX build remains headphone
+only. Its render-packet copy path does not yet implement a right-only speaker
+mode, and its ordinary stream start/pause path has no guarded speaker-amp
+client. Its packet timer runs at dispatch level, whereas GPIO/amp I/O must
+be handled in a suitable passive-level path. Normal speaker playback therefore
+needs a separate bounded stream lifecycle, progress-checked lease renewal,
+right-only sample handling and amplifier-first pause/error/power cleanup
+before hardware deployment. The two-second diagnostic and watchdog were not
+relaxed, and no ordinary speaker playback was enabled during this check.

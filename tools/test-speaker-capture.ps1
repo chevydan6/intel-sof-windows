@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Fixed one-channel speaker diagnostic with microphone capture. Default is amp OFF.
 # -Pulse explicitly requests one quiet short pulse; ordinary playback stays held.
+# Right is the reference speaker; the test laptop's left hardware path is suspect.
 param([string]$Output = (Join-Path $PSScriptRoot 'speaker-check.wav'),
-      [ValidateSet('Left','Right')][string]$Channel='Left', [switch]$Pulse,
+      [ValidateSet('Left','Right')][string]$Channel='Right', [switch]$Pulse,
       [switch]$Extended, [switch]$Listen, [switch]$Louder)
 $ErrorActionPreference = 'Stop'
 if($Extended -and !$Pulse){throw 'Extended requires an explicit Pulse request'}
