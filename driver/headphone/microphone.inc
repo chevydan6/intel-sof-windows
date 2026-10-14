@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // One-shot PUJJO user-facing camera DMIC0 diagnostic. Requires the headphone
-// build and its amplifier hold. No speakers, codec gain writes or user tuning.
+// build. Default capture holds the amplifier off; separate explicit speaker
+// diagnostic requests use the fixed guarded pulse recipe. No user gain tuning.
 // PDM0 A+B: coreboot brya/variants/baseboard/nissa/gpio.c GPP_R4/R5.
 // IPC3 clock limits: sof-adl-max98360a-rt5682 topology, DMIC0 48kHz.
 
@@ -51,6 +52,8 @@ SofMicGraph(PSOFPROBE_DEVICE_CONTEXT Context, PSOFMIC_CAPTURE_RESULT Result)
     return STATUS_SUCCESS;
 }
 
+#include "../speaker/speaker-check.inc"
+
 static NTSTATUS
 SofMicRestoreInput(PUCHAR Hda)
 {
@@ -86,7 +89,7 @@ SofMicRestoreInput(PUCHAR Hda)
 }
 
 static VOID
-SofMicCapture(WDFDEVICE Device, WDFREQUEST Request, size_t InputBytes, size_t OutputBytes)
+SofMicCapture(WDFDEVICE Device, WDFREQUEST Request, size_t InputBytes, size_t OutputBytes, ULONG SpeakerMode)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     PSOFMIC_CAPTURE_RESULT result;
@@ -103,6 +106,8 @@ SofMicCapture(WDFDEVICE Device, WDFREQUEST Request, size_t InputBytes, size_t Ou
     BOOLEAN touched = FALSE, configured = FALSE, triggered = FALSE;
     LARGE_INTEGER delay;
     NTSTATUS status, cleanup = STATUS_SUCCESS, step;
+    SOFSPEAKER_CHECK speaker = {0};
+    speaker.Mode = SpeakerMode;
 
     if (InputBytes != 0 || OutputBytes < sizeof(*result)) {
         WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
@@ -111,7 +116,7 @@ SofMicCapture(WDFDEVICE Device, WDFREQUEST Request, size_t InputBytes, size_t Ou
     status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*result), (PVOID *)&result, NULL);
     if (!NT_SUCCESS(status)) { WdfRequestComplete(Request, status); return; }
     RtlZeroMemory(result, sizeof(*result));
-    result->Version = 1; result->Rate = 48000; result->Channels = 2; result->Bits = 32;
+    result->Version = SpeakerMode ? 2 : 1; result->Reserved = SpeakerMode; result->Rate = 48000; result->Channels = 2; result->Bits = 32;
     result->Stage = 1;
     if (!context->ResourcesReady) { status = STATUS_DEVICE_NOT_READY; goto complete; }
     // Boot the verified muted headphone transport without starting playback.
@@ -123,6 +128,10 @@ SofMicCapture(WDFDEVICE Device, WDFREQUEST Request, size_t InputBytes, size_t Ou
         goto finish;
     }
     context->MicAttempted = TRUE; // Until a verified DSP reset, IDs cannot be reused.
+    if (SpeakerMode) {
+        status = SofSpeakerPrepare(Device, &speaker, result);
+        if (!NT_SUCCESS(status)) goto finish;
+    }
     hda = context->ToneHda;
     result->Stage = 2;
     if (READ_REGISTER_USHORT((PUSHORT)hda) != 0x9701 ||
@@ -231,6 +240,8 @@ SofMicCapture(WDFDEVICE Device, WDFREQUEST Request, size_t InputBytes, size_t Ou
         // Ring wraps in 128ms: reject pauses well before ambiguity/overwrite.
         if (gap >= 500000 || now - started > 60000000) { status = STATUS_IO_TIMEOUT; goto finish; }
         if (WdfRequestIsCanceled(Request)) { status = STATUS_CANCELLED; goto finish; }
+        status = SofSpeakerTick(context, &speaker, result);
+        if (!NT_SUCCESS(status)) goto finish;
         pos = READ_REGISTER_ULONG((PULONG)(hda + 0x84));
         result->Position = pos; result->HdaStatus = READ_REGISTER_UCHAR(hda + 0x83);
         if (pos >= SOFPROBE_TONE_BYTES || (result->HdaStatus & 0x18)) {
@@ -248,6 +259,10 @@ SofMicCapture(WDFDEVICE Device, WDFREQUEST Request, size_t InputBytes, size_t Ou
     }
     result->Stage = 23;
 finish:
+    if (SpeakerMode) {
+        step = SofSpeakerStopOutput(context, &speaker, result);
+        if (!NT_SUCCESS(step)) cleanup = step;
+    }
     // Always stop firmware and host DMA. Preserve the original failure details.
     if (triggered) {
         SOFMIC_CAPTURE_RESULT *scratch = result;
@@ -271,6 +286,18 @@ finish:
     if (table != NULL) WdfObjectDelete(table);
     if (audio != NULL) WdfObjectDelete(audio);
     if (bdl != NULL) WdfObjectDelete(bdl);
+    // Input cleanup must finish before output cleanup unmaps their shared HDA window.
+    if (SpeakerMode && speaker.Configured) {
+        static const ULONG freeSpeaker[] = {12,0x60030000,20};
+        if (!context->ToneDmaRunning) {
+            step = SofMicIpc(context, freeSpeaker, result);
+            if (!NT_SUCCESS(step)) cleanup = step;
+        }
+        if (NT_SUCCESS(cleanup) && context->TonePrepared &&
+            SofProbeStopToneHardware(context) != 0)
+            cleanup = STATUS_DEVICE_DATA_ERROR;
+        context->TonePcmConfigured = FALSE;
+    }
     result->CleanupStatus = (ULONG)cleanup;
     WdfWaitLockRelease(context->AcxPowerLock);
 complete:

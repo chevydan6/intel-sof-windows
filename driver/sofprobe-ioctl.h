@@ -354,3 +354,12 @@ typedef struct _SOFMIC_CAPTURE_RESULT {
     ULONG Rate, Channels, Bits, Reserved;
     UCHAR Samples[SOFMIC_CAPTURE_BYTES];
 } SOFMIC_CAPTURE_RESULT, *PSOFMIC_CAPTURE_RESULT;
+
+// Explicit speaker diagnostics: dry runs keep EN low; pulse modes are fixed
+// one-channel quiet PCM with short kernel-controlled enable and microphone capture.
+#define IOCTL_SOFPROBE_SPEAKER_DRY_LEFT CTL_CODE(FILE_DEVICE_UNKNOWN,0x81A,METHOD_BUFFERED,FILE_WRITE_ACCESS)
+#define IOCTL_SOFPROBE_SPEAKER_DRY_RIGHT CTL_CODE(FILE_DEVICE_UNKNOWN,0x81B,METHOD_BUFFERED,FILE_WRITE_ACCESS)
+#define IOCTL_SOFPROBE_SPEAKER_PULSE_LEFT CTL_CODE(FILE_DEVICE_UNKNOWN,0x81C,METHOD_BUFFERED,FILE_WRITE_ACCESS)
+#define IOCTL_SOFPROBE_SPEAKER_PULSE_RIGHT CTL_CODE(FILE_DEVICE_UNKNOWN,0x81D,METHOD_BUFFERED,FILE_WRITE_ACCESS)
+// Same bounded SOFMIC_CAPTURE_RESULT storage, Version=2; Reserved is mode 1..4
+// plus 0x400 output DMA advanced, 0x100 enable accepted, 0x200 explicit stop accepted.

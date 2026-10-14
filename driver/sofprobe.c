@@ -60,6 +60,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
 #ifdef SOFPLAY_HEADPHONE
     WDFIOTARGET HeadphoneCodec;
     BOOLEAN MicAttempted;
+    BOOLEAN SpeakerTestAttempted;
     WDFCOMMONBUFFER MicRetainedBdl, MicRetainedAudio, MicRetainedTable;
 #endif
     WDFSPINLOCK AcxBufferLock;
@@ -2991,9 +2992,17 @@ SofProbeEvtIoDeviceControl(
     NTSTATUS status;
 
 #ifdef SOFPLAY_HEADPHONE
+    // Explicit fixed speaker check; the normal endpoint remains headphones.
+    if (IoControlCode >= IOCTL_SOFPROBE_SPEAKER_DRY_LEFT &&
+        IoControlCode <= IOCTL_SOFPROBE_SPEAKER_PULSE_RIGHT &&
+        (IoControlCode - IOCTL_SOFPROBE_SPEAKER_DRY_LEFT) % 4 == 0) {
+        SofMicCapture(device, Request, InputBufferLength, OutputBufferLength,
+            1 + (IoControlCode - IOCTL_SOFPROBE_SPEAKER_DRY_LEFT) / 4);
+        return;
+    }
     // Fixed, bounded diagnostic capture; no arbitrary IPC or register writes.
     if (IoControlCode == IOCTL_SOFPROBE_MIC_CAPTURE) {
-        SofMicCapture(device, Request, InputBufferLength, OutputBufferLength);
+        SofMicCapture(device, Request, InputBufferLength, OutputBufferLength, 0);
         return;
     }
 #endif
@@ -3138,7 +3147,8 @@ SofProbeEvtIoDeviceControl(
         acx->Version = 8;
         acx->ThermalHold = 1;
 #ifdef SOFPLAY_HEADPHONE
-        acx->HeadphoneOnly = 1;
+        acx->HeadphoneOnly = context->SpeakerTestAttempted ? 0 : 1;
+        acx->ThermalHold = context->SpeakerTestAttempted ? 0 : 1;
 #endif
         acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
 #ifdef SOFPLAY_HEADPHONE
@@ -3338,6 +3348,7 @@ SofProbeEvtD0Exit(
             context->RomEntryAttempted = FALSE;
 #ifdef SOFPLAY_HEADPHONE
             context->MicAttempted = FALSE;
+            context->SpeakerTestAttempted = FALSE;
             // Both host input DMA and DSP have now been stopped and restored.
             if (context->MicRetainedTable != NULL) WdfObjectDelete(context->MicRetainedTable);
             if (context->MicRetainedAudio != NULL) WdfObjectDelete(context->MicRetainedAudio);

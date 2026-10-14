@@ -5,6 +5,8 @@ on:
     paths:
       - 'driver/acx/**'
       - 'driver/headphone/**'
+      - 'driver/speaker/**'
+      - 'driver/amp/amp-interface.h'
       - 'driver/codec/codec-interface.h'
       - 'driver/sofprobe.c'
       - 'driver/sofprobe-ioctl.h'
@@ -14,6 +16,7 @@ on:
       - 'tools/test-headphone-pipeline.py'
       - 'tools/test-pcm-guard.py'
       - 'tools/test-microphone-pipeline.py'
+      - 'tools/test-speaker-check.py'
       - '.github/workflows/build-headphone.yml'
   workflow_dispatch:
 
@@ -31,6 +34,7 @@ jobs:
       - run: python3 tools/test-headphone-pipeline.py
       - run: python3 tools/test-pcm-guard.py
       - run: python3 tools/test-microphone-pipeline.py
+      - run: python3 tools/test-speaker-check.py
   build:
     runs-on: windows-2022
     steps:
