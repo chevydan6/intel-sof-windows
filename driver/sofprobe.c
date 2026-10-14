@@ -5,6 +5,7 @@
 #include <ntddk.h>
 #include <wdf.h>
 #ifdef SOFPLAY_INTEGRATED
+#include <ks.h>
 #include <acx.h>
 #include <bcrypt.h>
 #include "acx/sofplay-samples.h"
@@ -66,6 +67,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     ULONG AcxMaxAdvance;
     ULONG AcxPacketBytes;
     ULONG AcxLastPacket;
+    BOOLEAN AcxEosReceived;
     ULONG AcxFormatTag;
     ULONG AcxContainerBits;
     ULONG AcxValidBits;
@@ -192,6 +194,7 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
         context->AcxLatePackets = 0;
         context->AcxMaxAdvance = 0;
         context->AcxPacketBytes = 0;
+        context->AcxEosReceived = FALSE;
         *Bytes = SOFPROBE_TONE_BYTES;
         status = STATUS_SUCCESS;
     }
@@ -257,15 +260,27 @@ SofProbeAcxCopySpeakerSamples(_Out_writes_bytes_(Bytes) UCHAR *Destination,
 NTSTATUS
 SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
                        _In_reads_bytes_(Bytes) const UCHAR *Source,
-                       _In_ ULONG Packet, _In_ ULONG Bytes)
+                       _In_ ULONG Packet, _In_ ULONG Bytes,
+                       _In_ ULONG Flags, _In_ ULONG EosPacketLength)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
     ULONG offset;
     ULONG first;
+    ULONG validBytes;
+    ULONG copyFirst;
     if (Bytes == 0 || Bytes > SOFPROBE_TONE_BYTES || (Bytes & 7) != 0)
         return STATUS_INVALID_PARAMETER;
+    if ((Flags & ~KSSTREAM_HEADER_OPTIONSF_ENDOFSTREAM) != 0)
+        return STATUS_INVALID_PARAMETER;
+    validBytes = Flags & KSSTREAM_HEADER_OPTIONSF_ENDOFSTREAM ? EosPacketLength : Bytes;
+    if (validBytes > Bytes || (validBytes & 7) != 0)
+        return STATUS_INVALID_PARAMETER;
     WdfSpinLockAcquire(context->AcxBufferLock);
+    if (context->AcxEosReceived) {
+        WdfSpinLockRelease(context->AcxBufferLock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
     status = SofProbeAcxAdvanceLocked(context);
     if (NT_SUCCESS(status)) {
         context->AcxPacketBytes = Bytes;
@@ -283,11 +298,19 @@ SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
         }
         offset = (ULONG)(((ULONGLONG)Packet * Bytes) % SOFPROBE_TONE_BYTES);
         first = min(Bytes, SOFPROBE_TONE_BYTES - offset);
-        SofProbeAcxCopySpeakerSamples(context->AcxRing + offset, Source, first);
-        if (first < Bytes)
-            SofProbeAcxCopySpeakerSamples(context->AcxRing, Source + first, Bytes - first);
+        // The final packet may contain zero valid bytes. Never copy the stale
+        // tail of its client buffer, including when the packet wraps the ring.
+        copyFirst = min(validBytes, first);
+        SofProbeAcxCopySpeakerSamples(context->AcxRing + offset, Source, copyFirst);
+        RtlZeroMemory(context->AcxRing + offset + copyFirst, first - copyFirst);
+        if (first < Bytes) {
+            ULONG copySecond = validBytes > first ? validBytes - first : 0;
+            SofProbeAcxCopySpeakerSamples(context->AcxRing, Source + first, copySecond);
+            RtlZeroMemory(context->AcxRing + copySecond, Bytes - first - copySecond);
+        }
         KeMemoryBarrier();
         context->AcxLastPacket = Packet;
+        context->AcxEosReceived = (Flags & KSSTREAM_HEADER_OPTIONSF_ENDOFSTREAM) != 0;
         status = STATUS_SUCCESS;
     }
     WdfSpinLockRelease(context->AcxBufferLock);

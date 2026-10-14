@@ -34,7 +34,8 @@ VOID SofProbeAcxRecordFailure(_In_ WDFDEVICE Device, _In_ ULONG Stage,
 NTSTATUS SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes);
 NTSTATUS SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
                                 _In_reads_bytes_(Bytes) const UCHAR *Source,
-                                _In_ ULONG Packet, _In_ ULONG Bytes);
+                                _In_ ULONG Packet, _In_ ULONG Bytes,
+                                _In_ ULONG Flags, _In_ ULONG EosPacketLength);
 NTSTATUS SofProbeAcxGetPosition(_In_ WDFDEVICE Device,
                                _Out_ PULONG Position,
                                _Out_ PUCHAR Status);
@@ -510,14 +511,13 @@ SofPlayEvtSetPacket(_In_ ACXSTREAM Stream, _In_ ULONG Packet,
     PSOFPLAY_STREAM_CONTEXT context = SofPlayGetStreamContext(Stream);
     PUCHAR source;
     NTSTATUS status;
-    UNREFERENCED_PARAMETER(Flags);
-    UNREFERENCED_PARAMETER(EosPacketLength);
     if (context->Packets == NULL || context->PacketCount == 0 || context->RingBytes == 0)
         return STATUS_DEVICE_NOT_READY;
     source = (PUCHAR)MmGetMdlVirtualAddress(
         context->Packets[Packet % context->PacketCount].RtPacketBuffer.u.MdlType.Mdl);
     source += context->Packets[Packet % context->PacketCount].RtPacketOffset;
-    status = SofProbeAcxWritePacket(context->Device, source, Packet, context->PacketSize);
+    status = SofProbeAcxWritePacket(context->Device, source, Packet, context->PacketSize,
+                                   Flags, EosPacketLength);
     if (!NT_SUCCESS(status)) return status;
     SofProbeAcxRecord(context->Device, 3);
     return STATUS_SUCCESS;
