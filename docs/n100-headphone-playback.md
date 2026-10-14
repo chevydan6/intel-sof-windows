@@ -224,3 +224,16 @@ This lies between the previous -12 and -6 dB acoustic checks; it is not a
 new acoustically certified clean maximum. No fresh audible test tones are
 started for this adjustment because headphone placement is not confirmed.
 The codec's analog gain and speaker hold remain unchanged.
+
+Source `90b9722` passed [WDK build, independent INF verification and host tests
+38530664398](https://github.com/chevydan6/windows-sof/actions/runs/38530664398).
+Installed as `oem43.inf`, version `7.47.54.802`. The installed binary hash
+matches the pinned artifact:
+`1C606819CE87D564CD7AEA39308848106D3221406A5762A56B4927950CCDC854`.
+Two silent playback cycles submitted 3,532 packets and completed 3,530 with
+zero late packets and one PCM rearm; both verified normal stream shutdown.
+Readback confirms the 9.54 dB ceiling, headphone-only mode and speaker hold.
+Windows volume is restored to 0 dB, unmuted, as found before this request;
+audio services are running automatically and the test task is removed.
+This validation checks transport/lifecycle, not acoustic distortion at the
+new intermediate ceiling. No OS reboot or audible calibration tones were used.
