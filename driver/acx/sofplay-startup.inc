@@ -204,6 +204,13 @@ SofPlayStartPlaybackHardware(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE 
     WdfWaitLockAcquire(context->AcxPowerLock, NULL);
 #ifdef SOFPLAY_HEADPHONE
     if (context->AcxHardwareReady) { WdfWaitLockRelease(context->AcxPowerLock); return STATUS_SUCCESS; }
+    // Preserve the first failure until device restart; boot helpers deliberately
+    // forbid a second ROM-entry attempt after an incomplete startup.
+    if (context->RomEntryAttempted) {
+        status = context->AcxStartupStatus;
+        WdfWaitLockRelease(context->AcxPowerLock);
+        return NT_SUCCESS(status) ? STATUS_DEVICE_NOT_READY : status;
+    }
     status = HeadphoneCodecOpen(Device);
     if (!NT_SUCCESS(status)) goto finish;
 #endif
@@ -215,6 +222,15 @@ SofPlayStartPlaybackHardware(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE 
     RtlZeroMemory(&boot, sizeof(boot));
     status = SofProbeBootHardware(Device, context, sizeof(boot), &boot,
                                    TRUE, TRUE, TRUE, TRUE, TRUE, TRUE);
+    {
+        WDFKEY key;
+        if (NT_SUCCESS(WdfDeviceOpenRegistryKey(Device, PLUGPLAY_REGKEY_DEVICE,
+                KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES, &key))) {
+            (VOID)SofProbeSaveValue(key, L"SofPlayBootResult",
+                ((PSOFPROBE_ROM_ENTRY_RESULT)&boot)->Result);
+            WdfRegistryClose(key);
+        }
+    }
     if (!NT_SUCCESS(status)) goto finish;
     if (((PSOFPROBE_ROM_ENTRY_RESULT)&boot)->Result != 0 || !boot.SessionActive) {
         status = STATUS_DEVICE_DATA_ERROR;
