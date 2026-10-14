@@ -33,3 +33,19 @@ References: [MAX98360 datasheet](https://www.analog.com/media/en/technical-docum
 ## Remaining boundary
 
 The shutdown-only amplifier driver previously reported that the GPIO controller accepted an output-low request. That is not an independent voltage or temperature measurement. Actual serial-audio timing, amplifier output, speaker integrity, and the original thermal cause remain unverified. Keep speaker playback held; these software checks do not establish that powered speaker tests are safe.
+
+## Continued review: final packets and DMA feeding
+
+The prototype ignored `Flags` and `EosPacketLength` in its render callback. Consequently it copied an entire client packet even when Windows specified only a shorter valid prefix, including a zero-length final packet. This can publish stale samples after the requested end of audio. It is a concrete defect, but does not establish the cause of continuous buzzing or heating.
+
+Commit `ff05c1b` passes those fields into the locked ring writer. It validates flags and stereo-frame alignment, copies only the valid prefix, clears the remaining packet bytes across ring wrap, and rejects submissions after an accepted end-of-stream. Successful buffer preparation resets that state. Notification timing is unchanged. Microsoft documents these requirements in [EvtAcxStreamSetRenderPacket](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/acxstreams/nc-acxstreams-evt_acx_stream_set_render_packet).
+
+The sanitizer test executes the production preparation, cursor, and packet-copy routines. It checks all 481 possible stereo-frame lengths of a 3,840-byte final packet at both an ordinary and a wrapping ring position, verifies that surrounding queued data is preserved, rejects subsequent submissions and malformed arguments, and verifies that a fresh preparation permits playback packets again. Existing attenuation, underrun, late-packet, and format/thermal-hold tests also pass. The first WDK build exposed a missing prerequisite header for `ks.h`; `83228eb` adds it. None of these changes has been installed during the thermal hold.
+
+The pinned PUJJOTEEN MAX-amplifier [dsp.ini](https://chromium.googlesource.com/chromiumos/overlays/board-overlays/+/93dea50b71007195324090989cb5b0d8759bc177/overlay-nissa/chromeos-base/chromeos-bsp-nissa/files/pujjoteen/audio/cras-config.max98357/dsp.ini) contains source/sink definitions without EQ or compressor coefficients; the accompanying `board.ini` and `apm.ini` are empty defaults. These files do not supply an additional speaker filter to port. This does not prove that every ChromeOS version or processing layer lacks protection.
+
+Linux v6.8 [hda-pcm.c](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/v6.8/sound/soc/sof/intel/hda-pcm.c) enables SPIB only when its `disable_rewinds` option is enabled, otherwise explicitly disabling it. Its acknowledgement callback publishes the application position when that mechanism is used. Therefore the Windows prototype's lack of SPIB publication is not by itself proof of a broken transport. Real scheduling, underruns, and serial output still need measurement; no speculative SPIB register change was made. The Windows cursor calculation still assumes observation within one 128 ms ring revolution.
+
+A subsequent read-only target check again returned ThermalHold 1, HardwareReady 0, zero runs/submissions/completions, both audio services Stopped, and amplifier stage 3/status 0/off-write count 1. No playback, firmware startup, driver installation, or reboot occurred during this continuation.
+
+The corrected commit `83228eb` passed the [ACX Windows build, INF verification, and offline tests](https://github.com/chevydan6/windows-sof/actions/runs/38497684602) and the [standalone probe build](https://github.com/chevydan6/windows-sof/actions/runs/38497684706). This verifies the software change's build and tested buffer behavior, not audible or thermal repair.
