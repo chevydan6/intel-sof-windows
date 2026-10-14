@@ -65,6 +65,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     WDFIOTARGET PreviewAmp;
     WDFTIMER PreviewTimer;
     SOF_RIGHT_PREVIEW Preview;
+    SOF_RIGHT_PREVIEW_DIAGNOSTICS PreviewDiagnostics;
     SOF_RIGHT_FILTER PreviewFilter;
     ULONG PreviewOnWrites, PreviewAmpWrites;
 #endif
@@ -3063,6 +3064,21 @@ SofProbeEvtIoDeviceControl(
     NTSTATUS status;
 
 #ifdef SOFPLAY_RIGHT_PREVIEW
+    if (IoControlCode == IOCTL_SOFPROBE_RIGHT_PREVIEW_DIAGNOSTICS) {
+        SOF_RIGHT_PREVIEW_DIAGNOSTICS *out;
+        if (InputBufferLength != 0 || OutputBufferLength < sizeof(*out)) {
+            WdfRequestComplete(Request, STATUS_INVALID_PARAMETER); return;
+        }
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*out), (PVOID *)&out, NULL);
+        if (NT_SUCCESS(status)) {
+            WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+            *out = context->PreviewDiagnostics;
+            out->Version = 1;
+            WdfWaitLockRelease(context->AcxPowerLock);
+        }
+        WdfRequestCompleteWithInformation(Request, status, NT_SUCCESS(status) ? sizeof(*out) : 0);
+        return;
+    }
     if (IoControlCode == IOCTL_SOFPROBE_RIGHT_PREVIEW_ARM ||
         IoControlCode == IOCTL_SOFPROBE_RIGHT_PREVIEW_STATUS) {
         SofRightPreviewControl(device, Request, IoControlCode, InputBufferLength, OutputBufferLength);

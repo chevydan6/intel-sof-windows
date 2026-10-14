@@ -33,12 +33,23 @@ static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
 static NTSTATUS SofRightPreviewStop(PSOFPROBE_DEVICE_CONTEXT c, NTSTATUS reason)
 {
     NTSTATUS status = STATUS_SUCCESS;
+    // Preserve the first stop snapshot across subsequent pause/cleanup calls.
+    if (c->Preview.Phase != 0 && c->Preview.Phase != 4) {
+        if (c->PreviewDiagnostics.Reason == SofRightNotStopped)
+            c->PreviewDiagnostics.Reason = SofRightPause;
+        c->PreviewDiagnostics.PhaseAtStop = c->Preview.Phase;
+        c->PreviewDiagnostics.ElapsedMs = (ULONG)(SofRightNow() - c->Preview.Started);
+    }
     if (c->Preview.Phase != 0) c->Preview.Phase = 4;
     if (!NT_SUCCESS(reason)) c->Preview.Error = reason;
     // No waiting under AcxPowerLock: the callback acquires that same lock.
     if (c->PreviewTimer != NULL) WdfTimerStop(c->PreviewTimer, FALSE);
     if (c->PreviewAmp != NULL) status = SofRightAmp(c, IOCTL_SOFAMP_STOP);
-    if (!NT_SUCCESS(status)) c->Preview.Error = status;
+    if (!NT_SUCCESS(status)) {
+        c->Preview.Error = status;
+        if (c->PreviewDiagnostics.Reason == SofRightPause)
+            c->PreviewDiagnostics.Reason = SofRightAmpStopError;
+    }
     WdfSpinLockAcquire(c->AcxBufferLock);
     if (c->AcxRing != NULL) RtlZeroMemory(c->AcxRing, SOFPROBE_TONE_BYTES);
     WdfSpinLockRelease(c->AcxBufferLock);
@@ -48,6 +59,8 @@ static NTSTATUS SofRightPreviewStop(PSOFPROBE_DEVICE_CONTEXT c, NTSTATUS reason)
 static NTSTATUS SofRightPreviewBegin(PSOFPROBE_DEVICE_CONTEXT c)
 {
     if (c->Preview.Phase != 1) return STATUS_INVALID_DEVICE_STATE;
+    RtlZeroMemory(&c->PreviewDiagnostics, sizeof(c->PreviewDiagnostics));
+    c->PreviewDiagnostics.Version = 1;
     c->Preview.Phase = 2;
     c->Preview.Started = c->Preview.LastCheck = SofRightNow();
     c->Preview.Position = 0;
@@ -65,45 +78,69 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
     WdfWaitLockAcquire(c->AcxPowerLock, NULL);
     if (c->Preview.Phase != 2 && c->Preview.Phase != 3) goto done;
     now = SofRightNow();
+    ++c->PreviewDiagnostics.Ticks;
+    c->PreviewDiagnostics.ElapsedMs = (ULONG)(now - c->Preview.Started);
+    c->PreviewDiagnostics.GapMs = (ULONG)(now - c->Preview.LastCheck);
+    c->PreviewDiagnostics.PreviousPositionLow = (ULONG)c->Preview.Position;
+    c->PreviewDiagnostics.PreviousPositionHigh = (ULONG)(c->Preview.Position >> 32);
+    c->PreviewDiagnostics.TransportFlags = (c->ToneDmaRunning ? 1U : 0U) |
+        (c->ToneTriggerActive ? 2U : 0U);
     // Check time before any possible enable/renew. Late callbacks cannot
     // extend a lease or start a fresh burst after the absolute deadline.
     if (now - c->Preview.Started >= SOF_RIGHT_PREVIEW_MS) {
+        c->PreviewDiagnostics.Reason = SofRightDeadline;
         (VOID)SofRightPreviewStop(c, STATUS_SUCCESS);
         goto done;
     }
     if (now < c->Preview.LastCheck || now - c->Preview.LastCheck >= SOF_RIGHT_PREVIEW_GAP_MS) {
+        c->PreviewDiagnostics.Reason = SofRightLateTick;
         status = STATUS_IO_TIMEOUT; goto stop;
     }
     WdfSpinLockAcquire(c->AcxBufferLock);
     status = SofProbeAcxAdvanceLocked(c);
+    c->PreviewDiagnostics.AdvanceStatus = (ULONG)status;
+    if (!NT_SUCCESS(status)) c->PreviewDiagnostics.Reason = SofRightAdvanceError;
     if (NT_SUCCESS(status)) {
         const LONG *samples = (const LONG *)c->AcxRing;
         position = c->AcxLinearPosition;
+        c->PreviewDiagnostics.ObservedPositionLow = (ULONG)position;
+        c->PreviewDiagnostics.ObservedPositionHigh = (ULONG)(position >> 32);
         for (i = 0; i < SOFPROBE_TONE_BYTES / sizeof(LONG); i += 2) {
             if (samples[i] != 0 || samples[i+1] > SOF_RIGHT_PREVIEW_PEAK ||
                 samples[i+1] < -SOF_RIGHT_PREVIEW_PEAK) {
+                c->PreviewDiagnostics.Reason = SofRightInvalidPcm;
                 status = STATUS_DATA_ERROR; break;
             }
         }
     }
     WdfSpinLockRelease(c->AcxBufferLock);
     if (!NT_SUCCESS(status)) goto stop;
-    if (position <= c->Preview.Position || !c->ToneTriggerActive || !c->ToneDmaRunning) {
+    if (!c->ToneTriggerActive || !c->ToneDmaRunning) {
+        c->PreviewDiagnostics.Reason = SofRightInactive;
+        status = STATUS_DEVICE_DATA_ERROR; goto stop;
+    }
+    if (position <= c->Preview.Position) {
+        c->PreviewDiagnostics.Reason = SofRightNoProgress;
         status = STATUS_DEVICE_DATA_ERROR; goto stop;
     }
     if (c->Preview.Phase == 2) {
         if (c->Preview.Powered) {
             status = SofRightAmp(c, IOCTL_SOFAMP_START_LISTEN);
-            if (!NT_SUCCESS(status)) goto stop;
+            if (!NT_SUCCESS(status)) {
+                c->PreviewDiagnostics.Reason = SofRightAmpStartError; goto stop;
+            }
         }
         c->Preview.Phase = 3;
     } else {
         if (!SofRightPreviewCanContinue(&c->Preview, now, position)) {
+            c->PreviewDiagnostics.Reason = SofRightPolicyError;
             status = STATUS_IO_TIMEOUT; goto stop;
         }
         if (c->Preview.Powered) {
             status = SofRightAmp(c, IOCTL_SOFAMP_RENEW);
-            if (!NT_SUCCESS(status)) goto stop;
+            if (!NT_SUCCESS(status)) {
+                c->PreviewDiagnostics.Reason = SofRightAmpRenewError; goto stop;
+            }
         }
     }
     c->Preview.LastCheck = now;

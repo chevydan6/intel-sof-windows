@@ -130,6 +130,18 @@ and normal sustained speaker playback is not yet enabled. Await the user's
 listening/temperature check before extending the audible test; preserve the
 existing two-second parent limit and independent 100 ms / 2200 ms amp limits.
 
+The user subsequently confirmed that the powered melody sounded clear and both
+speaker areas remained cool. This permits the next controlled test; it does not
+resolve the intermittent monitoring error.
+
+`right-speaker-preview.ps1 -Diagnostics` reads a separate 48-byte diagnostic
+IOCTL without changing the original status ABI or any playback limits. It saves
+the first stop reason, phase, elapsed time, callback gap, previous and observed
+DMA positions, transport flags and advance status. Later cleanup retains that
+snapshot; a new device initialization clears it. The test worker saves this
+information even when the final preview status reports failure. Offline fault
+injection verifies reason selection and preservation through cleanup.
+
 After saving the results, restored the previously working headphone package
 oem54.inf 11.0.0.373 and restarted both Windows audio services. The amplifier
 was verified off with no faults. That older headphone package does not contain

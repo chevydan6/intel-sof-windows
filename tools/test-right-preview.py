@@ -49,8 +49,10 @@ typedef void VOID;
 #define RtlCopyMemory memcpy
 #define RtlZeroMemory(p,n) memset(p,0,n)
 #include "right-preview-policy.h"
+#include "right-preview-status.h"
 typedef struct Context {
     SOF_RIGHT_PREVIEW Preview;
+    SOF_RIGHT_PREVIEW_DIAGNOSTICS PreviewDiagnostics;
     SOF_RIGHT_FILTER PreviewFilter;
     int AcxPowerLock, AcxBufferLock;
     struct Context *PreviewTimer;
@@ -123,12 +125,15 @@ int main(void) {
     tick(&c,20,7680); assert(renews==1);
     for(int i=0;i<98;i++) tick(&c,20,7680);
     assert(c.Preview.Phase==4 && !ampOn && stops==1 && !c.Preview.Error);
+    assert(sizeof(c.PreviewDiagnostics)==48);
+    assert(c.PreviewDiagnostics.Reason==SofRightDeadline && c.PreviewDiagnostics.ElapsedMs==2000);
     int before=starts; tick(&c,20,7680); assert(starts==before);
     powerLock=1; assert(SofRightPreviewBegin(&c)==STATUS_INVALID_DEVICE_STATE); powerLock=0;
     c=reset(0); begin(&c); for(int i=0;i<100;i++) tick(&c,20,7680);
     assert(!starts && !renews && !ampOn && c.Preview.Phase==4);
     // Late first callback must never enable the amp.
     c=reset(1); begin(&c); tick(&c,80,7680); assert(!starts && stops==1 && c.Preview.Error);
+    assert(c.PreviewDiagnostics.Reason==SofRightLateTick && c.PreviewDiagnostics.GapMs==80);
     c=reset(1); begin(&c); tick(&c,2000,7680); assert(!starts && stops==1);
     // A DMA stall, error, channel corruption, or excess amplitude shuts off.
     for(int fault=0;fault<6;fault++) {
@@ -140,6 +145,13 @@ int main(void) {
         if(fault==5) ring[1]=-SOF_RIGHT_PREVIEW_PEAK-1;
         tick(&c,20,fault==0 ? 0 : 7680);
         assert(c.Preview.Phase==4 && c.Preview.Error && !ampOn && stops==1);
+        ULONG reasons[]={SofRightNoProgress,SofRightAdvanceError,SofRightInvalidPcm,
+                         SofRightInvalidPcm,SofRightInactive,SofRightInvalidPcm};
+        assert(c.PreviewDiagnostics.Reason==reasons[fault]);
+        assert(c.PreviewDiagnostics.PhaseAtStop==3 && c.PreviewDiagnostics.Ticks==2);
+        SOF_RIGHT_PREVIEW_DIAGNOSTICS saved=c.PreviewDiagnostics;
+        powerLock=1; SofRightPreviewStop(&c,STATUS_SUCCESS); powerLock=0;
+        assert(!memcmp(&saved,&c.PreviewDiagnostics,sizeof(saved)));
     }
     c=reset(1); begin(&c); tick(&c,20,7680); tick(&c,80,7680);
     assert(c.Preview.Phase==4 && !ampOn && renews==0);
@@ -147,10 +159,12 @@ int main(void) {
         c=reset(1); begin(&c); failCommand=command;
         tick(&c,20,7680); if(command==2) tick(&c,20,7680);
         assert(c.Preview.Phase==4 && !ampOn && stops==1 && c.Preview.Error);
+        assert(c.PreviewDiagnostics.Reason==(command==1 ? SofRightAmpStartError : SofRightAmpRenewError));
     }
     c=reset(1); begin(&c); tick(&c,20,7680);
     powerLock=1; assert(SofRightPreviewStop(&c,STATUS_SUCCESS)==0); powerLock=0;
     tick(&c,20,7680); assert(!ampOn && starts==1 && c.Preview.Phase==4);
+    assert(c.PreviewDiagnostics.Reason==SofRightPause);
     // Sample conversion must preserve channel isolation and bounded arithmetic.
     Context a={0}, b={0}; LONG input[4096], whole[4096], split[4096];
     uint32_t random=1;
