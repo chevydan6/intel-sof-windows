@@ -276,8 +276,8 @@ measurements do not establish an exact hardware cutoff or thermal limit.
 The private 44.224-second Ubuntu recording matched the 30-second source at
 7.580 seconds (normalized correlation 0.407). Neither microphone channel
 clipped after the startup interval. Acoustic capture verifies the melody was
-emitted; listening quality and speaker temperature still require the user's
-feedback. That feedback is pending for this test. Raw recordings, ring data,
+emitted. The user subsequently confirmed clear sound and both speaker areas
+still cool after the thirty-second test. Raw recordings, ring data,
 and detailed logs stay under ignored `build/speaker-repair/preview-30-9629594/`.
 
 After the test the parent was returned to the corrected `4b0304c` headphone-only
@@ -285,3 +285,36 @@ package (oem60.inf, 13.28.13.565). Both Windows audio services were restarted.
 The amplifier was ready and off with no fault; no preview scheduled task
 remained, and the Windows boot time was unchanged. The 30-second speaker mode
 is a separate diagnostic package, not normal sustained speaker playback.
+
+## Application-stop and idle check
+
+`invoke-right-speaker-preview.ps1 -StopEarly` now runs a separate lifecycle test
+using the same validated thirty-second parent and amplifier packages. It plays
+for five seconds measured from the application's Play call, checks that the
+preview is active, calls SoundPlayer.Stop, and observes shutdown before its
+cleanup STOP command or either audio service is stopped. It requires a Pause
+stop reason before the absolute deadline, and then six one-second idle checks
+with no new amplifier enable. A failure to finish within five seconds of the
+stop request fails the test and triggers the existing bounded cleanup.
+
+Both the dry and powered tests passed. The powered Stop call returned after
+39 ms, and the first combined parent/amplifier query verified Finished/Off at
+42 ms from the call's start. This is an observed upper bound, not a measurement
+of the exact GPIO edge. OffWrites was already 2 before test cleanup and stayed
+2 through all idle observations, ending at 6129 ms. OnWrites stayed 1, with no
+watchdog, amplifier fault, preview error, or late packets. The preview's own
+elapsed time at Pause was 4560 ms; the difference from five seconds includes
+application/engine startup before the driver's stream began.
+
+All captured left samples were zero. The powered capture contained 5,136
+nonzero right samples, peak 436,125,245, below the existing ceiling. A private
+23.915-second microphone recording matched four seconds of the source melody
+at 7.657 seconds (absolute normalized correlation 0.651); neither microphone
+channel clipped after startup. This short lifecycle test does not establish
+long-duration thermal behavior or arbitrary applications' pause semantics.
+
+Headphone-only oem60.inf was restored afterward with both audio services
+running, the amplifier off and fault-free, and no remaining preview task.
+Windows was not rebooted. Evidence stays under ignored
+`build/speaker-repair/preview-stop-9629594/`. Normal sustained speaker playback
+and automatic rearming remain disabled.

@@ -2,7 +2,7 @@
 # Invoke the bounded preview in the logged-in desktop, including from SSH.
 param([Parameter(Mandatory=$true)][string]$WaveFile,
       [Parameter(Mandatory=$true)][string]$OutputPrefix,
-      [switch]$Powered)
+      [switch]$Powered,[switch]$StopEarly)
 $ErrorActionPreference='Stop'
 $user=(Get-CimInstance Win32_ComputerSystem).UserName
 if(!$user){throw 'Sign into the Windows desktop first; no interactive user is present.'}
@@ -13,6 +13,7 @@ $task='SofRightPreview-'+[Guid]::NewGuid().ToString('N')
 $runner=Join-Path $PSScriptRoot 'test-right-speaker-preview.ps1'
 $arguments='-NoProfile -ExecutionPolicy Bypass -File "'+$runner+'" -WaveFile "'+$WaveFile+'" -OutputPrefix "'+$OutputPrefix+'"'
 if($Powered){$arguments+=' -Powered'}
+if($StopEarly){$arguments+=' -StopEarly'}
 $registered=$false
 try {
  $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
