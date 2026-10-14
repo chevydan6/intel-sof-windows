@@ -125,3 +125,14 @@ electrical coupling and hardware faults remain possible.
 The next fixed diagnostic uses -30.10 dBFS (12.04 dB above the second test),
 with the same sample verification, channel isolation, 40 ms stop and watchdog.
 It does not enable a general speaker playback path.
+
+Source `5d202a2` passed [build 38535944208](https://github.com/chevydan6/windows-sof/actions/runs/38535944208)
+and installed as `oem47.inf`, version `8.33.50.788`. Its initial left pulse
+returned `0xF03`, full capture, zero status/cleanup errors and successful
+amplifier-off/DSP-baseline checks. The recording now shows a left-test 1 kHz
+component at 1.05–1.06 s, approximately -79.8/-88.1 dBFS at the two microphones,
+10.8/5.7 dB above each recording's largest pre-test component. Thus the earlier
+faint left recordings do not establish a dead channel. The physical heat/hearing
+observation for this pulse and the same-level right comparison are pending.
+Headphone audio services were restored afterward. The fresh amplifier query
+reported ready=1, active=0, output-low accepted and no faults.
