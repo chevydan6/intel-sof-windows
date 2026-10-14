@@ -93,11 +93,25 @@ SofPlaySendStartupIpc(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
         (Bytes & 3) != 0 || Words[0] != Bytes)
         return STATUS_INVALID_PARAMETER;
     RtlZeroMemory(&request, sizeof(request));
+    RtlZeroMemory(&reply, sizeof(reply));
     request.Version = 1;
     request.RequestSize = Bytes;
     RtlCopyMemory(request.RequestWords, Words, Bytes);
     status = SofProbeExchangeHardware(Context, &request,
         FIELD_OFFSET(SOFPROBE_IPC3_EXCHANGE_REQUEST, RequestWords) + Bytes, &reply);
+    if (!NT_SUCCESS(status) || reply.Result != 0 || reply.ReplyError != 0) {
+        WDFKEY key;
+        WDFDEVICE device = (WDFDEVICE)WdfObjectContextGetObject(Context);
+        if (NT_SUCCESS(WdfDeviceOpenRegistryKey(device, PLUGPLAY_REGKEY_DEVICE,
+                KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES, &key))) {
+            (VOID)SofProbeSaveValue(key, L"SofPlayIpcCommand", Words[1]);
+            (VOID)SofProbeSaveValue(key, L"SofPlayIpcComponent", Bytes >= 12 ? Words[2] : 0);
+            (VOID)SofProbeSaveValue(key, L"SofPlayIpcStatus", (ULONG)status);
+            (VOID)SofProbeSaveValue(key, L"SofPlayIpcResult", reply.Result);
+            (VOID)SofProbeSaveValue(key, L"SofPlayIpcReplyError", reply.ReplyError);
+            WdfRegistryClose(key);
+        }
+    }
     if (!NT_SUCCESS(status)) return status;
     return reply.Result == 0 && reply.ReplyError == 0
         ? STATUS_SUCCESS : STATUS_DEVICE_DATA_ERROR;

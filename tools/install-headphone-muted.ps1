@@ -11,8 +11,8 @@ function Assert-Hold([switch]$Headphone) {
  $paths = @([SofProbeClient]::Paths())
  if ($paths.Count -ne 1) { throw 'Expected one maintenance interface' }
  $v = [SofProbeClient]::Exchange($paths[0],0x22605C,$null)
- if ($v.Length -lt 25 -or ($v[0] -ne $(if ($Headphone) {8} else {7})) -or $v[11] -ne 7 -or $v[13] -ne 0 -or $v[24] -ne 1 -or $v[2] -ne 0) { throw 'Playback hold verification failed' }
- if ($Headphone -and ($v.Length -lt 26 -or $v[25] -ne 1)) { throw 'Expected isolated headphone build' }
+ if ($v.Length -lt 25 -or $v[0] -notin @(7,8) -or $v[11] -ne 7 -or $v[13] -ne 0 -or $v[24] -ne 1 -or $v[2] -ne 0) { throw 'Playback hold verification failed' }
+ if (($Headphone -or $v[0] -eq 8) -and ($v[0] -ne 8 -or $v.Length -lt 26 -or $v[25] -ne 1)) { throw 'Expected isolated headphone build' }
  $s = [SofProbeClient]::Exchange($paths[0],0x226010,$null)
  if (($s[0] -band 2) -ne 0) { throw 'Unexpected HDA DMA RUN bit' }
  $d = [SofProbeClient]::Exchange($paths[0],0x226000,$null)
@@ -27,7 +27,7 @@ try {
  $amp = Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\MX98360A\0\Device Parameters'
  if ($amp.SofAmpStage -ne 3 -or $amp.SofAmpStatus -ne 0 -or $amp.SofAmpOffWrites -lt 1) { throw 'Amplifier shutdown request not verified' }
  $service = (Get-PnpDeviceProperty -InstanceId $id -KeyName DEVPKEY_Device_Service -ErrorAction SilentlyContinue).Data
- if ($service -and $service -ne 'sofplay') { throw 'Expected existing held speaker driver' }
+ if ($service -notin @('sofplay','sofheadphone')) { throw 'Expected existing held audio driver' }
  $device = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -eq $id)
  if ($device.Count -ne 1) { throw "Expected exact present device $id" }
  $ids = (Get-PnpDeviceProperty -InstanceId $id -KeyName DEVPKEY_Device_HardwareIds).Data

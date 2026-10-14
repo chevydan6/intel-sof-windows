@@ -58,6 +58,7 @@ try {
  $after = Read-Transport
  $after | ConvertTo-Json -Compress | Write-Host
  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'read-live-snapshot.ps1') -AcxStatus
+ Get-ItemProperty -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\$parent\Device Parameters" | Select-Object SofPlayBootResult,SofPlayIpcCommand,SofPlayIpcComponent,SofPlayIpcStatus,SofPlayIpcResult,SofPlayIpcReplyError | Format-List
  $codec = & (Join-Path $root 'read-headphone-codec.ps1')
  $codec | Format-List
  Assert-AmpOff
