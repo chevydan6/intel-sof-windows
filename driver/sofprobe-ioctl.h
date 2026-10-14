@@ -94,6 +94,7 @@ typedef struct _SOFPROBE_ACX_STATUS {
     ULONG ValidBits;
     ULONG SubFormat;
     ULONG ThermalHold;
+    ULONG HeadphoneOnly;
 } SOFPROBE_ACX_STATUS, *PSOFPROBE_ACX_STATUS;
 
 typedef struct _SOFPROBE_SNAPSHOT {

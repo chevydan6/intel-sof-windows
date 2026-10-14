@@ -1,0 +1,51 @@
+name: Build muted N100 ACX headphone prototype
+
+on:
+  push:
+    paths:
+      - 'driver/acx/**'
+      - 'driver/headphone/**'
+      - 'driver/codec/codec-interface.h'
+      - 'driver/sofprobe.c'
+      - 'driver/sofprobe-ioctl.h'
+      - 'tools/test-audio-format.py'
+      - 'tools/test-acx-ring.py'
+      - 'tools/test-amp-hold.py'
+      - '.github/workflows/build-headphone.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  format-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/test-audio-format.py
+      - run: python3 tools/test-acx-ring.py
+      - run: python3 tools/test-amp-hold.py
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+      - name: Build with Windows Driver Kit
+        shell: pwsh
+        run: msbuild driver/headphone/sofheadphone.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
+      - name: Verify generated INF independently
+        shell: pwsh
+        run: |
+          $tool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Tools' -Recurse -Filter InfVerif.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Select-Object -Last 1
+          if (-not $tool) { throw 'x64 InfVerif.exe was not found in the WDK' }
+          & $tool.FullName /w driver/headphone/x64/Debug/sofheadphone.inf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sofheadphone-development-package
+          path: driver/headphone/x64/Debug/sofheadphone/
+          if-no-files-found: error

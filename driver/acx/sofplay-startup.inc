@@ -126,6 +126,10 @@ SofPlayPreparePcm(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     pcm[9] = SOFPROBE_TONE_PAGES; pcm[10] = SOFPROBE_TONE_BYTES;
     pcm[15] = 2; pcm[17] = 48000; pcm[18] = 0x00020001;
     pcm[19] = 0x00040004; pcm[20] = SOFPROBE_TONE_PERIOD_BYTES; pcm[21] = 1;
+#ifdef SOFPLAY_HEADPHONE
+    pcm[15] = 1; // SOF_IPC_FRAME_S24_4LE
+    pcm[19] = 0x00040003; // 24 valid bits in a 32-bit container
+#endif
     return SofPlaySendStartupIpc(Context, pcm, sizeof(pcm));
 }
 
@@ -135,10 +139,19 @@ SofPlayPrepareSpeaker(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     // Same fixed IPC3 speaker graph verified by test-speaker-tone.ps1.
     static const ULONG pipeline[] = {48,0x30100000,5,1,0,0,1000,0,5000,0,0,1};
     static const ULONG buffer[] = {44,0x30200000,2,12,1,0,0,768,0x71,0,0};
+#ifdef SOFPLAY_HEADPHONE
+    static const ULONG host[] = {76,0x30010000,0,1,1,0,0,36,0,2,2,0,1,0,0,0,0,0,0};
+    static const ULONG dai[] = {80,0x30010000,4,2,1,0,0,36,0,0,2,0,1,0,0,0,0,1,0,0};
+    // Packaged RT5682 topology: SSP0, I2S, 19.2 MHz MCLK, 2.4 MHz BCLK,
+    // 48 kHz, two 25-bit slots carrying 24 valid bits. No SSP1 component.
+    static const ULONG config[] = {112,0x80010000,1,0,0x4001,0,0,0,0,0,0,0,0,60,
+                                   0,19200000,48000,2400000,2,3,3,24,25,1,0,0x44,0,0};
+#else
     static const ULONG host[] = {76,0x30010000,0,1,1,0,0,36,0,2,2,0,2,0,0,0,0,0,0};
     static const ULONG dai[] = {80,0x30010000,4,2,1,0,0,36,0,0,2,0,2,0,0,0,0,1,1,0};
     static const ULONG config[] = {112,0x80010000,1,1,0x4001,0,0,0,0,0,0,0,0,60,
                                    0,24000000,48000,3072000,2,3,3,32,32,1,0,0,0,0};
+#endif
     static const ULONG hostToBuffer[] = {16,0x30030000,0,2};
     static const ULONG bufferToDai[] = {16,0x30030000,2,4};
     static const ULONG complete[] = {12,0x30130000,5};
@@ -189,6 +202,11 @@ SofPlayStartPlaybackHardware(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE 
     NTSTATUS status;
     UNREFERENCED_PARAMETER(PreviousState);
     WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+#ifdef SOFPLAY_HEADPHONE
+    if (context->AcxHardwareReady) { WdfWaitLockRelease(context->AcxPowerLock); return STATUS_SUCCESS; }
+    status = HeadphoneCodecOpen(Device);
+    if (!NT_SUCCESS(status)) goto finish;
+#endif
     ++context->AcxStartupCount;
     context->AcxStartupStage = 1;
     status = SofPlayLoadFirmware(context);
@@ -204,6 +222,10 @@ SofPlayStartPlaybackHardware(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE 
     }
     status = SofPlayPrepareSpeaker(context);
     if (!NT_SUCCESS(status)) goto finish;
+#ifdef SOFPLAY_HEADPHONE
+    status = HeadphoneCodecCommand(context->HeadphoneCodec, IOCTL_CODEC_PREPARE);
+    if (!NT_SUCCESS(status)) goto finish;
+#endif
     WdfSpinLockAcquire(context->AcxBufferLock);
     context->AcxHardwareReady = TRUE;
     WdfSpinLockRelease(context->AcxBufferLock);
@@ -212,6 +234,9 @@ SofPlayStartPlaybackHardware(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE 
 finish:
     // WDF does not call D0Exit when D0Entry fails: unwind here as well.
     if (!NT_SUCCESS(status)) {
+#ifdef SOFPLAY_HEADPHONE
+        HeadphoneCodecClose(context);
+#endif
         context->AcxRing = NULL;
         if (context->SessionActive) SofProbeStopSessionHardware(context, &stopped);
     }

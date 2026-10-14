@@ -22,7 +22,7 @@ typedef int NTSTATUS, WDFDEVICE;
 #define VOID void
 #define RTL_NUMBER_OF(a) (sizeof(a)/sizeof((a)[0]))
 static USHORT regs[65536];
-static int operations, failAt, alwaysFail, busy, badMute, calReads, calStarts;
+static int operations, failAt, alwaysFail, busy, badMute, calReads, calStarts, preparing;
 static unsigned delays;
 static int transfer(void) { return ++operations==failAt || alwaysFail ? -99 : 0; }
 static NTSTATUS WriteRegister(WDFDEVICE device, USHORT reg, USHORT value) {
@@ -32,7 +32,8 @@ static NTSTATUS WriteRegister(WDFDEVICE device, USHORT reg, USHORT value) {
     // No operation may clear either output mute or enable audio DACs.
     if (reg==RT5682_HP_CTRL_1) assert(value==0x8080);
     if (reg==RT5682_HP_CTRL_2) assert(value==0x8000);
-    if (reg==RT5682_PWR_DIG_1) assert((value&0x8c00)==0);
+    if (reg==RT5682_PWR_DIG_1 && !preparing) assert((value&0x8c00)==0);
+    if (reg==RT5682_PWR_ANLG_1 && preparing) assert(!(value&3));
     if (reg==RT5682_HP_CALIB_CTRL_1 && value==0xfc00) {
         assert(regs[RT5682_HP_CTRL_1]==0x8080);
         assert(regs[RT5682_HP_CTRL_2]==0x8000);
@@ -52,9 +53,10 @@ static NTSTATUS ReadRegister(WDFDEVICE device, USHORT reg, ULONG *value) {
 }
 static void CodecDelay(ULONG ms) { assert(ms<=20); delays+=ms; }
 #include "rt5682-init.h"
+#include "rt5682-playback.h"
 static void reset(void) {
     memset(regs,0,sizeof(regs));
-    operations=failAt=alwaysFail=busy=badMute=calReads=calStarts=0; delays=0;
+    operations=failAt=alwaysFail=busy=badMute=calReads=calStarts=preparing=0; delays=0;
 }
 static void off(void) {
     assert(regs[RT5682_HP_CTRL_1]==0x8080 && regs[RT5682_HP_CTRL_2]==0x8000);
@@ -79,7 +81,16 @@ int main(void) {
     reset(); alwaysFail=1;
     assert(CodecInitializeMuted(0)==-99);
     assert(operations==24 && calStarts==0); // Both complete shutdown attempts.
-    printf("PASS: muted calibration, %d injected transfer failures, bounded timeout, mute readback rejection, persistent I2C failure\n",total);
+    reset(); assert(CodecInitializeMuted(0)==0); preparing=1; operations=0;
+    assert(CodecPrepareHeadphoneMuted(0)==0);
+    assert(regs[RT5682_HP_CTRL_1]==0x8080 && regs[RT5682_HP_CTRL_2]==0x8000);
+    assert(regs[RT5682_DAC1_DIG_VOL]==0x4646 && !(regs[RT5682_PWR_ANLG_1]&3));
+    int prepareOperations=operations;
+    for (int fault=1;fault<=prepareOperations;++fault) {
+        reset(); assert(CodecInitializeMuted(0)==0); preparing=1; operations=0; failAt=fault;
+        assert(CodecPrepareHeadphoneMuted(0)==-99); off();
+    }
+    printf("PASS: muted calibration, %d injected transfer failures, bounded timeout, mute readback rejection, persistent I2C failure, muted clock/DAC preparation\n",total);
 }
 '''
 with tempfile.TemporaryDirectory(prefix='sof-codec-init-') as directory:

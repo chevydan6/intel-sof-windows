@@ -8,6 +8,7 @@
 #define RESHUB_USE_HELPER_ROUTINES
 #include <reshub.h>
 #include "codec-policy.h"
+#include "codec-interface.h"
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD CodecAdd;
@@ -15,6 +16,7 @@ EVT_WDF_DEVICE_PREPARE_HARDWARE CodecPrepare;
 EVT_WDF_DEVICE_RELEASE_HARDWARE CodecRelease;
 EVT_WDF_DEVICE_D0_ENTRY CodecEnter;
 EVT_WDF_DEVICE_D0_EXIT CodecExit;
+EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL CodecControl;
 
 typedef struct _CODEC_CONTEXT {
     LARGE_INTEGER Connection;
@@ -23,6 +25,8 @@ typedef struct _CODEC_CONTEXT {
     ULONG Reads;
     BOOLEAN Identified;
     BOOLEAN Initialized;
+    BOOLEAN Prepared;
+    NTSTATUS LastStatus;
     ULONG HpMute, DacControl, DigitalPower;
 } CODEC_CONTEXT;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(CODEC_CONTEXT, CodecContext);
@@ -120,6 +124,7 @@ static NTSTATUS WriteRegister(WDFDEVICE device, USHORT reg, USHORT value)
 }
 
 #include "rt5682-init.h"
+#include "rt5682-playback.h"
 
 static NTSTATUS ValidateAndSaveCrs(WDFDEVICE device)
 {
@@ -172,6 +177,8 @@ NTSTATUS CodecAdd(WDFDRIVER driver, PWDFDEVICE_INIT init)
     WDF_PNPPOWER_EVENT_CALLBACKS callbacks;
     WDF_OBJECT_ATTRIBUTES attributes;
     WDFDEVICE device;
+    WDF_IO_QUEUE_CONFIG queue;
+    NTSTATUS status;
     UNREFERENCED_PARAMETER(driver);
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&callbacks);
     callbacks.EvtDevicePrepareHardware = CodecPrepare;
@@ -181,7 +188,13 @@ NTSTATUS CodecAdd(WDFDRIVER driver, PWDFDEVICE_INIT init)
     WdfDeviceInitSetPnpPowerEventCallbacks(init, &callbacks);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, CODEC_CONTEXT);
     attributes.ExecutionLevel = WdfExecutionLevelPassive;
-    return WdfDeviceCreate(&init, &attributes, &device);
+    status = WdfDeviceCreate(&init, &attributes, &device);
+    if (!NT_SUCCESS(status)) return status;
+    status = WdfDeviceCreateDeviceInterface(device, &CodecInterfaceGuid, NULL);
+    if (!NT_SUCCESS(status)) return status;
+    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queue, WdfIoQueueDispatchSequential);
+    queue.EvtIoDeviceControl = CodecControl;
+    return WdfIoQueueCreate(device, &queue, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
 }
 
 NTSTATUS CodecPrepare(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST translated)
@@ -194,6 +207,8 @@ NTSTATUS CodecPrepare(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST translate
     c->DeviceId = c->VendorId = c->VersionId = MAXULONG;
     c->Reads = 0;
     c->Identified = c->Initialized = FALSE;
+    c->Prepared = FALSE;
+    c->LastStatus = STATUS_DEVICE_NOT_READY;
     c->HpMute = c->DacControl = c->DigitalPower = MAXULONG;
     Report(device, 1, STATUS_PENDING);
     status = ValidateAndSaveCrs(device);
@@ -266,6 +281,7 @@ NTSTATUS CodecEnter(WDFDEVICE device, WDF_POWER_DEVICE_STATE previous)
         c->DigitalPower != 0) { status = STATUS_DEVICE_DATA_ERROR; goto finish; }
     c->Initialized = TRUE;
 finish:
+    c->LastStatus = status;
     Report(device, c->Identified ? 5 : 3, status);
     if (!NT_SUCCESS(status) && c->I2c != NULL) {
         if (c->Identified) (VOID)CodecResetMuted(device);
@@ -283,6 +299,7 @@ NTSTATUS CodecExit(WDFDEVICE device, WDF_POWER_DEVICE_STATE target)
     if (c->I2c != NULL) {
         if (c->Identified) status = CodecResetMuted(device);
         c->Initialized = FALSE;
+        c->Prepared = FALSE;
         Report(device, 6, status);
         WdfIoTargetClose(c->I2c);
         WdfObjectDelete(c->I2c);
@@ -290,6 +307,54 @@ NTSTATUS CodecExit(WDFDEVICE device, WDF_POWER_DEVICE_STATE target)
     }
     c->Identified = FALSE;
     return status;
+}
+
+VOID CodecControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
+                  size_t inputBytes, ULONG code)
+{
+    WDFDEVICE device = WdfIoQueueGetDevice(queue);
+    CODEC_CONTEXT *c = CodecContext(device);
+    CODEC_STATUS *result;
+    NTSTATUS status;
+    if (inputBytes != 0 || outputBytes < sizeof(*result) ||
+        (code != IOCTL_CODEC_QUERY && code != IOCTL_CODEC_PREPARE && code != IOCTL_CODEC_STOP)) {
+        WdfRequestComplete(request, STATUS_INVALID_PARAMETER);
+        return;
+    }
+    status = WdfRequestRetrieveOutputBuffer(request, sizeof(*result), (PVOID *)&result, NULL);
+    if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
+    if (!c->Identified || c->I2c == NULL) { WdfRequestComplete(request, STATUS_DEVICE_NOT_READY); return; }
+    if (code == IOCTL_CODEC_STOP) {
+        status = CodecResetMuted(device);
+        c->Initialized = c->Prepared = FALSE;
+    } else if (code == IOCTL_CODEC_PREPARE) {
+        status = STATUS_SUCCESS;
+        if (!c->Initialized) {
+            status = CodecInitializeMuted(device);
+            c->Initialized = NT_SUCCESS(status);
+        }
+        if (NT_SUCCESS(status) && !c->Prepared) {
+            status = CodecPrepareHeadphoneMuted(device);
+            c->Prepared = NT_SUCCESS(status);
+            if (!NT_SUCCESS(status)) c->Initialized = FALSE;
+        }
+    } else status = STATUS_SUCCESS;
+    if (NT_SUCCESS(status)) status = ReadRegister(device, RT5682_HP_CTRL_1, &c->HpMute);
+    if (NT_SUCCESS(status)) status = ReadRegister(device, RT5682_HP_CTRL_2, &c->DacControl);
+    if (NT_SUCCESS(status)) status = ReadRegister(device, RT5682_PWR_DIG_1, &c->DigitalPower);
+    if (!NT_SUCCESS(status)) {
+        (VOID)CodecResetMuted(device);
+        c->Initialized = c->Prepared = FALSE;
+    }
+    c->LastStatus = status;
+    Report(device, c->Prepared ? 7 : 5, status);
+    if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1; result->DeviceId = c->DeviceId; result->VendorId = c->VendorId;
+    result->Initialized = c->Initialized; result->Prepared = c->Prepared;
+    result->HpMute = c->HpMute; result->DacControl = c->DacControl;
+    result->DigitalPower = c->DigitalPower; result->LastStatus = (ULONG)c->LastStatus;
+    WdfRequestCompleteWithInformation(request, status, sizeof(*result));
 }
 
 NTSTATUS CodecRelease(WDFDEVICE device, WDFCMRESLIST resources)

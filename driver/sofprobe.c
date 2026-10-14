@@ -57,6 +57,9 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     BOOLEAN ToneTriggerActive;
 #ifdef SOFPLAY_INTEGRATED
     WDFWAITLOCK AcxPowerLock;
+#ifdef SOFPLAY_HEADPHONE
+    WDFIOTARGET HeadphoneCodec;
+#endif
     WDFSPINLOCK AcxBufferLock;
     BOOLEAN AcxHardwareReady;
     BOOLEAN AcxPcmNeedsReset;
@@ -110,6 +113,10 @@ C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
 
 #ifdef SOFPLAY_INTEGRATED
 static NTSTATUS SofPlayRearmPcmLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context);
+#ifdef SOFPLAY_HEADPHONE
+NTSTATUS SofPlayStartPlaybackHardware(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState);
+#include "headphone/codec-client.inc"
+#endif
 VOID
 SofProbeAcxRecordFormat(_In_ WDFDEVICE Device, _In_ ULONG Tag,
                          _In_ ULONG Bits, _In_ ULONG ValidBits,
@@ -179,6 +186,14 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
+#ifdef SOFPLAY_HEADPHONE
+    // Child codec enumeration is complete by stream preparation; D0Entry
+    // itself remains dormant and never configures the speaker route.
+    if (!context->AcxHardwareReady) {
+        status = SofPlayStartPlaybackHardware(Device, WdfPowerDeviceD0);
+        if (!NT_SUCCESS(status)) return status;
+    }
+#endif
     WdfWaitLockAcquire(context->AcxPowerLock, NULL);
     if (context->AcxHardwareReady && context->AcxPcmNeedsReset) {
         status = SofPlayRearmPcmLocked(context);
@@ -253,7 +268,13 @@ SofProbeAcxCopySpeakerSamples(_Out_writes_bytes_(Bytes) UCHAR *Destination,
     for (i = 0; i < Bytes; i += sizeof(LONG)) {
         LONG sample;
         RtlCopyMemory(&sample, Source + i, sizeof(sample));
+#ifdef SOFPLAY_HEADPHONE
+        // Windows PCM is left aligned; SOF S24_4LE is right aligned. A fixed
+        // -24.08 dB development ceiling precedes the codec's -39 dB gain.
+        sample /= 4096;
+#else
         sample = SofPlayAttenuateSpeakerSample(sample);
+#endif
         RtlCopyMemory(Destination + i, &sample, sizeof(sample));
     }
 }
@@ -3051,8 +3072,11 @@ SofProbeEvtIoDeviceControl(
             return;
         }
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
-        acx->Version = 7;
+        acx->Version = 8;
         acx->ThermalHold = 1;
+#ifdef SOFPLAY_HEADPHONE
+        acx->HeadphoneOnly = 1;
+#endif
         acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
         acx->StartupCount = context->AcxStartupCount;
         acx->StartupStage = context->AcxStartupStage;
@@ -3231,6 +3255,9 @@ SofProbeEvtD0Exit(
     WdfSpinLockRelease(context->AcxBufferLock);
     if (context->AcxTimer != NULL) WdfTimerStop(context->AcxTimer, TRUE);
     if (context->ToneTriggerActive) (VOID)SofProbeAcxPauseLocked(Device);
+#ifdef SOFPLAY_HEADPHONE
+    HeadphoneCodecClose(context);
+#endif
 #endif
     if (context->SessionActive) {
         SofProbeStopSessionHardware(context, &result);

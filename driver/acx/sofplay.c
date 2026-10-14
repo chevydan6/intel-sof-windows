@@ -83,8 +83,13 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(SOFPLAY_DEVICE_CONTEXT, SofPlayGetContext)
 #endif
 
 static const GUID SofPlaySpeakerComponent =
+#ifdef SOFPLAY_HEADPHONE
+    { 0xe4f1a7ab, 0xf3b0, 0x4eaf,
+      { 0xb4, 0x08, 0x42, 0x69, 0x39, 0xcb, 0x6f, 0xe8 } };
+#else
     { 0x39edc32d, 0xd57e, 0x47a9,
       { 0x84, 0x20, 0xbb, 0xa1, 0x08, 0x78, 0x5c, 0xf0 } };
+#endif
 static const GUID SofPlayAudioCategory =
     { 0x6994ad04, 0x93ef, 0x11d0,
       { 0xa3, 0xcc, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96 } };
@@ -127,7 +132,11 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACXJACK jack = NULL;
     WDF_OBJECT_ATTRIBUTES attributes;
     // Match the reference string in sofplay.inx AddInterface directives.
+#ifdef SOFPLAY_HEADPHONE
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"Headphone0");
+#else
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"Speaker0");
+#endif
     NTSTATUS status;
 
     *Circuit = NULL;
@@ -156,7 +165,11 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     ACX_PIN_CONFIG_INIT(&pinConfig);
     pinConfig.Type = AcxPinTypeSource;
     pinConfig.Communication = AcxPinCommunicationNone;
+#ifdef SOFPLAY_HEADPHONE
+    pinConfig.Category = &KSNODETYPE_HEADPHONES;
+#else
     pinConfig.Category = &SofPlaySpeakerNode;
+#endif
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = circuit;
     status = AcxPinCreate(circuit, &attributes, &pinConfig, &pins[1]);
@@ -169,6 +182,10 @@ SofPlayCreateRenderCircuit(_In_ WDFDEVICE Device,
     jackConfig.Description.GeoLocation = AcxGeoLocFront;
     jackConfig.Description.GenLocation = AcxGenLocPrimaryBox;
     jackConfig.Description.PortConnection = AcxPortConnIntegratedDevice;
+#ifdef SOFPLAY_HEADPHONE
+    jackConfig.Description.ConnectionType = AcxConnTypeUnknown;
+    jackConfig.Description.PortConnection = AcxPortConnJack;
+#endif
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = pins[1];
     status = AcxJackCreate(pins[1], &attributes, &jackConfig, &jack);
