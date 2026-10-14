@@ -2,6 +2,13 @@
 // AcxPowerLock serializes all amp calls and preview state. The separate
 // passive, non-periodic timer never performs GPIO I/O from the packet DPC.
 static ULONGLONG SofRightNow(VOID) { return KeQueryInterruptTime() / 10000; }
+#ifdef SOFPLAY_RIGHT_PREVIEW_LONG
+#define SOF_RIGHT_AMP_QUERY IOCTL_SOFAMP_QUERY_PREVIEW
+#define SOF_RIGHT_AMP_START IOCTL_SOFAMP_START_PREVIEW
+#else
+#define SOF_RIGHT_AMP_QUERY IOCTL_SOFAMP_QUERY
+#define SOF_RIGHT_AMP_START IOCTL_SOFAMP_START_LISTEN
+#endif
 
 static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
 {
@@ -9,6 +16,7 @@ static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
     WDF_MEMORY_DESCRIPTOR buffer;
     WDF_REQUEST_SEND_OPTIONS options;
     ULONG_PTR returned = 0;
+    ULONG maximumMs = (code == IOCTL_SOFAMP_QUERY_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW) ? 8200 : 2200;
     NTSTATUS status;
     if (c->PreviewAmp == NULL) return STATUS_DEVICE_NOT_READY;
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&buffer, &out, sizeof(out));
@@ -19,14 +27,14 @@ static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
     if (!NT_SUCCESS(status)) return status;
     if (returned != sizeof(out) || out.Version != 2 || !out.Ready ||
         out.Faulted || out.FaultStatus || out.CleanupStatus ||
-        out.LeaseMs != 100 || out.MaximumMs != 2200)
+        out.LeaseMs != 100 || out.MaximumMs != maximumMs)
         return STATUS_DEVICE_DATA_ERROR;
-    if (code == IOCTL_SOFAMP_START_LISTEN || code == IOCTL_SOFAMP_RENEW) {
+    if (code == IOCTL_SOFAMP_START_LISTEN || code == IOCTL_SOFAMP_START_PREVIEW || code == IOCTL_SOFAMP_RENEW) {
         if (!out.Active || out.OutputRequest != 2 || out.OnWrites != c->PreviewOnWrites + 1)
             return STATUS_DEVICE_DATA_ERROR;
     } else if (out.Active || out.OutputRequest != 1) return STATUS_DEVICE_DATA_ERROR;
     c->PreviewAmpWrites = out.OnWrites;
-    if (code == IOCTL_SOFAMP_QUERY) c->PreviewOnWrites = out.OnWrites;
+    if (code == IOCTL_SOFAMP_QUERY || code == IOCTL_SOFAMP_QUERY_PREVIEW) c->PreviewOnWrites = out.OnWrites;
     return STATUS_SUCCESS;
 }
 
@@ -129,7 +137,7 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
     }
     if (c->Preview.Phase == 2) {
         if (c->Preview.Powered) {
-            status = SofRightAmp(c, IOCTL_SOFAMP_START_LISTEN);
+            status = SofRightAmp(c, SOF_RIGHT_AMP_START);
             if (!NT_SUCCESS(status)) {
                 c->PreviewDiagnostics.Reason = SofRightAmpStartError; goto stop;
             }
@@ -187,7 +195,7 @@ static NTSTATUS SofRightPreviewOpen(WDFDEVICE device)
     WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(&open, &name, GENERIC_READ | GENERIC_WRITE);
     open.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
     status = WdfIoTargetOpen(c->PreviewAmp, &open);
-    if (NT_SUCCESS(status)) status = SofRightAmp(c, IOCTL_SOFAMP_QUERY);
+    if (NT_SUCCESS(status)) status = SofRightAmp(c, SOF_RIGHT_AMP_QUERY);
     if (!NT_SUCCESS(status)) {
         WdfObjectDelete(c->PreviewAmp); c->PreviewAmp = NULL;
     }

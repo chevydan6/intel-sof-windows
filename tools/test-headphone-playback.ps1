@@ -82,7 +82,14 @@ try {
   if(!$ready){throw 'Windows did not start a headphone stream'}
   $c=& (Join-Path $root 'read-headphone-codec.ps1') -AllowPlaying
   $c | Format-List | Out-Host
-  if($c.Prepared -ne 1 -or $c.HpMute -ne '0x0000' -or $c.DacControl -ne '0x6000'){throw 'Normal stream did not unmute the headphone codec'}
+  if($c.Prepared -ne 1 -or $c.HpMute -ne '0x0000' -or $c.DacControl -ne '0x6000'){
+   $jack=Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\10EC5682\0\Device Parameters'
+   $jack | Select-Object CodecStreamRequested,CodecPlaying,CodecJackPresent,CodecJackPolls | Format-List | Out-Host
+   if($jack.CodecStreamRequested-eq 1 -and $jack.CodecPlaying-eq 0 -and $jack.CodecJackPresent-eq 0 -and $c.LastStatus-eq '0x00000000'){
+    throw 'Headphone stream is waiting for jack detection; connect headphones before this playback test'
+   }
+   throw 'Normal stream did not unmute the headphone codec'
+  }
   if($Record -and $cycle -eq 1) {
    $readyFile=Join-Path $root 'microphone.ready';Remove-Item $readyFile -ErrorAction SilentlyContinue
    $args='-NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $root 'test-microphone.ps1')+'" -DuringAudition -Output "'+$Record+'" -ReadyFile "'+$readyFile+'"'

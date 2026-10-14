@@ -168,3 +168,30 @@ The regression fails on the previous code and passes in both speaker and
 headphone builds with the correction. It checks CBL, repeated CBL/zero reads,
 continuing from the boundary, BCIS, out-of-range positions and both actual error
 bits. Offline success does not by itself prove the cause of the hardware error.
+
+The raw-diagnostic build completed eight dry comparisons. It observed 61 reads
+at exactly CBL across those runs, proving that the condition rejected by the
+old code occurs on this hardware. None of those eight runs caught the preview
+timer itself stopping at that boundary, so the earlier intermittent stop is not
+conclusively attributed to this bug. A temporary SCP timeout was retried; the
+Windows boot time stayed unchanged.
+
+The corrected `4b0304c` build passed all applicable CI workflows and installed as
+preview oem59.inf 13.28.12.991. Five consecutive interactive dry runs then passed,
+including nonzero right PCM, silent left PCM, no late packets, no preview error,
+normal stream-owned pause and amplifier off with zero enables/faults. These
+runs exercised 44 boundary reads without rejecting them. The speaker preview
+still has its original two-second limit.
+
+## Separate eight-second preview build
+
+`/p:RightPreviewLong=true` produces the separately named
+`sofplay-right-preview-long-package` artifact. The normal preview remains
+two seconds. The extended build queries a new amplifier capability before
+arming, uses a distinct kernel-only START_PREVIEW command and stops at 8000 ms.
+The amp supplies a fixed 8200 ms ceiling with the existing 100 ms lease; an old
+amp driver cannot arm this preview. Neither duration nor output level is a
+caller-supplied value. The DC filter, peak ceiling, silent left channel,
+monitoring checks, explicit one-shot arm and shutdown behavior are unchanged.
+Offline tests exercise both parent durations and the new amp authorization,
+deadline, lost-heartbeat and owner-cleanup paths. Hardware validation is pending.

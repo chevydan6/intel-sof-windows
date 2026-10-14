@@ -45,6 +45,10 @@ typedef void VOID;
 #define IOCTL_SOFAMP_START_LISTEN 1
 #define IOCTL_SOFAMP_RENEW 2
 #define IOCTL_SOFAMP_STOP 3
+#define IOCTL_SOFAMP_START_PREVIEW 4
+#define IOCTL_SOFAMP_QUERY_PREVIEW 5
+#define IOCTL_SOFAMP_QUERY 6
+/* PREVIEW_AMP_MODES */
 #define WDF_REL_TIMEOUT_IN_MS(x) (x)
 #define RtlCopyMemory memcpy
 #define RtlZeroMemory(p,n) memset(p,0,n)
@@ -92,7 +96,7 @@ static NTSTATUS SofProbeAcxAdvanceLocked(Context *c) {
 }
 static NTSTATUS SofRightAmp(Context *c, ULONG command) {
     (void)c; assert(powerLock && !spinLock);
-    if (command==IOCTL_SOFAMP_START_LISTEN) { assert(!ampOn); ampOn=1; ++starts; }
+    if (command==SOF_RIGHT_AMP_START) { assert(!ampOn); ampOn=1; ++starts; }
     if (command==IOCTL_SOFAMP_RENEW) { assert(ampOn); ++renews; }
     if (command==IOCTL_SOFAMP_STOP) { ampOn=0; ++stops; }
     return command==(ULONG)failCommand ? STATUS_IO_TIMEOUT : STATUS_SUCCESS;
@@ -124,18 +128,18 @@ int main(void) {
     Context c=reset(1); begin(&c);
     tick(&c,20,7680); assert(starts==1 && ampOn && c.Preview.Phase==3);
     tick(&c,20,7680); assert(renews==1);
-    for(int i=0;i<98;i++) tick(&c,20,7680);
+    for(unsigned i=0;i<SOF_RIGHT_PREVIEW_MS/20-2;i++) tick(&c,20,7680);
     assert(c.Preview.Phase==4 && !ampOn && stops==1 && !c.Preview.Error);
     assert(sizeof(c.PreviewDiagnostics)==64 && c.PreviewDiagnostics.Version==2);
-    assert(c.PreviewDiagnostics.Reason==SofRightDeadline && c.PreviewDiagnostics.ElapsedMs==2000);
+    assert(c.PreviewDiagnostics.Reason==SofRightDeadline && c.PreviewDiagnostics.ElapsedMs==SOF_RIGHT_PREVIEW_MS);
     int before=starts; tick(&c,20,7680); assert(starts==before);
     powerLock=1; assert(SofRightPreviewBegin(&c)==STATUS_INVALID_DEVICE_STATE); powerLock=0;
-    c=reset(0); begin(&c); for(int i=0;i<100;i++) tick(&c,20,7680);
+    c=reset(0); begin(&c); for(unsigned i=0;i<SOF_RIGHT_PREVIEW_MS/20;i++) tick(&c,20,7680);
     assert(!starts && !renews && !ampOn && c.Preview.Phase==4);
     // Late first callback must never enable the amp.
     c=reset(1); begin(&c); tick(&c,80,7680); assert(!starts && stops==1 && c.Preview.Error);
     assert(c.PreviewDiagnostics.Reason==SofRightLateTick && c.PreviewDiagnostics.GapMs==80);
-    c=reset(1); begin(&c); tick(&c,2000,7680); assert(!starts && stops==1);
+    c=reset(1); begin(&c); tick(&c,SOF_RIGHT_PREVIEW_MS,7680); assert(!starts && stops==1);
     // A DMA stall, error, channel corruption, or excess amplitude shuts off.
     for(int fault=0;fault<6;fault++) {
         c=reset(1); begin(&c); tick(&c,20,7680); assert(ampOn);
@@ -157,7 +161,7 @@ int main(void) {
     c=reset(1); begin(&c); tick(&c,20,7680); tick(&c,80,7680);
     assert(c.Preview.Phase==4 && !ampOn && renews==0);
     for(int command=1;command<=2;command++) {
-        c=reset(1); begin(&c); failCommand=command;
+        c=reset(1); begin(&c); failCommand=command==1 ? SOF_RIGHT_AMP_START : IOCTL_SOFAMP_RENEW;
         tick(&c,20,7680); if(command==2) tick(&c,20,7680);
         assert(c.Preview.Phase==4 && !ampOn && stops==1 && c.Preview.Error);
         assert(c.PreviewDiagnostics.Reason==(command==1 ? SofRightAmpStartError : SofRightAmpRenewError));
@@ -189,9 +193,11 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory(prefix='sof-right-preview-') as td:
     p = Path(td)
-    (p/'test.c').write_text(c)
-    subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',
+    modes=source[source.index('#ifdef SOFPLAY_RIGHT_PREVIEW_LONG'):source.index('#endif')+6]
+    (p/'test.c').write_text(c.replace('/* PREVIEW_AMP_MODES */',modes))
+    for flags in ([], ['-DSOFPLAY_RIGHT_PREVIEW_LONG=1']):
+      subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',*flags,
                     '-fsanitize=address,undefined','-fno-omit-frame-pointer',
                     '-I',str(root/'driver/speaker'),str(p/'test.c'),'-o',str(p/'test')],check=True)
-    subprocess.run([str(p/'test')],check=True)
+      subprocess.run([str(p/'test')],check=True)
 print('PASS: right-only PCM, DC rejection, peak ceiling, bounded streaming, stalled DMA, late callbacks, failed amp I/O, and cleanup')

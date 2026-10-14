@@ -57,6 +57,13 @@ jobs:
           if-no-files-found: error
 
   right-preview:
+    strategy:
+      matrix:
+        include:
+          - artifact: sofplay-right-preview-package
+            property: RightPreview
+          - artifact: sofplay-right-preview-long-package
+            property: RightPreviewLong
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +72,7 @@ jobs:
           msbuild-architecture: x64
       - name: Build explicitly armed right-only preview
         shell: pwsh
-        run: msbuild driver/acx/sofplay.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /p:RightPreview=true /verbosity:minimal
+        run: msbuild driver/acx/sofplay.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /p:${{ matrix.property }}=true /verbosity:minimal
       - name: Verify generated INF
         shell: pwsh
         run: |
@@ -77,6 +84,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: sofplay-right-preview-package
+          name: ${{ matrix.artifact }}
           path: driver/acx/x64/Debug/sofplay/
           if-no-files-found: error

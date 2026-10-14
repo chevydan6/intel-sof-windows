@@ -164,6 +164,30 @@ int main(void){
     setup(&testDevice.State);
     r=request(0,&a,IOCTL_SOFAMP_START_LISTEN,0,48);assert(r.status==0);
     SofAmpFileCleanup(&a);assert(!testDevice.State.Active && testDevice.State.OutputRequest==1);
+    // Extended preview is a separate command; legacy listening stays 2200 ms.
+    setup(&testDevice.State);
+    r=request(1,&a,IOCTL_SOFAMP_QUERY_PREVIEW,0,48);
+    assert(r.status==0 && !r.out.Active && r.out.MaximumMs==8200 && !highWrites);
+    r=request(1,&a,IOCTL_SOFAMP_START_PREVIEW,0,48);
+    assert(r.status==STATUS_ACCESS_DENIED && !highWrites);
+    r=request(0,&a,IOCTL_SOFAMP_START_PREVIEW,0,48);
+    assert(r.status==0 && r.out.Active && r.out.MaximumMs==8200);
+    ULONGLONG previewBegun=clockMs;
+    assert(testDevice.State.MaximumDeadline==previewBegun+8200);
+    r=request(0,&b,IOCTL_SOFAMP_RENEW,0,48);assert(r.status==STATUS_ACCESS_DENIED);
+    r=request(0,&a,IOCTL_SOFAMP_START_PREVIEW,0,48);assert(r.status==STATUS_DEVICE_BUSY);
+    for(int step=1;step<205;step++) {
+      clockMs=previewBegun+40*step;
+      r=request(0,&a,IOCTL_SOFAMP_RENEW,0,48);assert(r.status==0 && r.out.Active);
+      assert(testDevice.State.Deadline<=previewBegun+8200);
+    }
+    clockMs=previewBegun+8200;SofAmpTimer(&testDevice);
+    assert(!testDevice.State.Active && testDevice.State.Faulted && testDevice.State.WatchdogTrips==1);
+    setup(&testDevice.State);r=request(0,&a,IOCTL_SOFAMP_START_PREVIEW,0,48);assert(r.status==0);
+    clockMs+=100;SofAmpTimer(&testDevice);
+    assert(!testDevice.State.Active && testDevice.State.Faulted);
+    setup(&testDevice.State);r=request(0,&a,IOCTL_SOFAMP_START_PREVIEW,0,48);assert(r.status==0);
+    SofAmpFileCleanup(&a);assert(!testDevice.State.Active && testDevice.State.OutputRequest==1);
     puts("PASS: amp ownership, user-mode enable rejection, leases, watchdog, stale timers, cleanup and GPIO failures");
 }
 '''

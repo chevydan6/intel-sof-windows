@@ -5,6 +5,7 @@
 #define SOFAMP_LEASE_MS 100UL
 #define SOFAMP_MAXIMUM_MS 250UL
 #define SOFAMP_LISTEN_MAXIMUM_MS 2200UL
+#define SOFAMP_PREVIEW_MAXIMUM_MS 8200UL
 #define SOFAMP_START_DELAY_MS 5UL
 #define SOFAMP_OUTPUT_UNKNOWN 0UL
 #define SOFAMP_OUTPUT_OFF 1UL
@@ -55,7 +56,8 @@ static NTSTATUS SofAmpStateStartBounded(SOFAMP_STATE *s, PVOID io, PVOID owner, 
 {
     NTSTATUS status;
     ULONGLONG now;
-    if (maximumMs != SOFAMP_MAXIMUM_MS && maximumMs != SOFAMP_LISTEN_MAXIMUM_MS)
+    if (maximumMs != SOFAMP_MAXIMUM_MS && maximumMs != SOFAMP_LISTEN_MAXIMUM_MS &&
+        maximumMs != SOFAMP_PREVIEW_MAXIMUM_MS)
         return STATUS_INVALID_PARAMETER;
     if (!s->Ready || s->Faulted) return STATUS_DEVICE_NOT_READY;
     if (owner == NULL) return STATUS_INVALID_PARAMETER;

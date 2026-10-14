@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 // One explicitly armed application stream. No automatic retry or rearming.
+#ifdef SOFPLAY_RIGHT_PREVIEW_LONG
+#define SOF_RIGHT_PREVIEW_MS 8000ULL
+#else
 #define SOF_RIGHT_PREVIEW_MS 2000ULL
+#endif
 #define SOF_RIGHT_PREVIEW_GAP_MS 80ULL
 #define SOF_RIGHT_PREVIEW_PEAK 536870911L
 typedef struct {

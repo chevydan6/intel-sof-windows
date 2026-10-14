@@ -5,9 +5,12 @@ The first target is an Intel N100 laptop with a PCI audio controller at
 `8086:54c8` and an I2C Realtek RT5682 codec (`ACPI\10EC5682`). This repository
 contains diagnostic tooling and experimental ACX audio drivers.
 
-**Speaker playback is currently disabled after reported speaker heating and
-distortion.** The shutdown-only amplifier driver requests EN low; this is not a
-measurement of temperature or proof that the hardware fault is resolved. See the
+**Everyday speaker playback remains disabled after reported heating and
+distortion.** A separate, explicitly armed [right-speaker preview](docs/n100-right-speaker-preview.md)
+has played Windows application audio for a bounded two-second test, with the
+left channel silent and amplifier shutdown verified. The user confirmed clear
+sound and cool speaker areas for that test. Left-side imbalance also reproduces
+in Fedora; its hardware cause remains unresolved. See the
 [thermal investigation](docs/n100-amplifier-thermal-review.md).
 
 Normal headphone playback now works through Windows applications on the target.

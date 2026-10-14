@@ -28,7 +28,7 @@ try {
   & (Join-Path $PSScriptRoot 'read-live-snapshot.ps1') -AcxRingOutput ($OutputPrefix+'.ring'+$i+'.bin') | Out-Host
   & (Join-Path $PSScriptRoot 'right-speaker-preview.ps1') | ConvertTo-Json | Set-Content ($OutputPrefix+'.phase'+$i+'.json')
  }
- Start-Sleep -Milliseconds 2200
+ Start-Sleep -Milliseconds ($armed.MaximumMs+200)
  $player.Stop()
  $state=& (Join-Path $PSScriptRoot 'right-speaker-preview.ps1')
  $state | ConvertTo-Json | Set-Content ($OutputPrefix+'.state.json')
