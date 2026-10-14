@@ -327,3 +327,26 @@ The verified lower-level package was restored as `oem50.inf`, version
 `8.54.47.948`, with held DSP/no-DMA checks passing. A fresh amplifier query is
 ready, inactive, off-request accepted and fault-free. Headphone services were
 started again. The matched lower-level recording is prepared but has not run.
+
+## Matched lower-level comparison
+
+The user confirmed the -15.10 dBFS pulse was audible and the speakers remained
+cool, but its duration was too short to judge sound quality by ear. One matched
+-18.06 dBFS right pulse then completed with flags `0xF04`, full capture, zero
+status/cleanup errors, exactly one enable and verified amplifier-off cleanup.
+Both microphone paths used the preceding recording settings; Ubuntu was at
+volume 0.10, 32-bit recording, with a three-second settling period. No clipping
+occurred after the Ubuntu startup transient or in the pulse windows. Headphone
+services and Ubuntu microphone volume were restored afterward.
+
+Ubuntu's fitted lower-level fundamentals were -48.99/-49.57 dBFS, versus
+-45.74/-46.04 dBFS in the louder capture. The 3.24/3.54 dB measured increases
+are close to the 2.96 dB source step. Second-through-fifth harmonic ratios were
+2.22/3.37 percent at the lower level and 2.90/4.61 percent at the higher level.
+Lenovo's corresponding ratios fell from 13.06/6.10 to 9.42/4.20 percent. These
+short acoustic-chain fits support a level-dependent nonlinear contribution,
+without identifying whether it arises in the amplifier, speaker, microphone,
+or a combination. They do not establish electrical amplifier THD, a damaged
+speaker, or safe sustained playback. No obvious hard clipping is established.
+Hold further amplitude escalation while investigating this distortion; thermal
+feedback after the latest lower-level pulse remains pending.
