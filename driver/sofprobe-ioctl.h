@@ -362,4 +362,12 @@ typedef struct _SOFMIC_CAPTURE_RESULT {
 #define IOCTL_SOFPROBE_SPEAKER_PULSE_LEFT CTL_CODE(FILE_DEVICE_UNKNOWN,0x81C,METHOD_BUFFERED,FILE_WRITE_ACCESS)
 #define IOCTL_SOFPROBE_SPEAKER_PULSE_RIGHT CTL_CODE(FILE_DEVICE_UNKNOWN,0x81D,METHOD_BUFFERED,FILE_WRITE_ACCESS)
 // Same bounded SOFMIC_CAPTURE_RESULT storage, Version=2; Reserved is mode 1..4
-// plus 0x400 output DMA advanced, 0x100 enable accepted, 0x200 explicit stop accepted.
+// plus 0x800 host ring verified, 0x400 output DMA advanced,
+// 0x100 enable accepted, 0x200 explicit stop accepted.
+#define IOCTL_SOFPROBE_SPEAKER_SNAPSHOT CTL_CODE(FILE_DEVICE_UNKNOWN,0x81E,METHOD_BUFFERED,FILE_READ_ACCESS)
+// Cached during the explicit diagnostic, before any amplifier enable. Querying
+// this record never starts hardware or reads the audio data FIFO.
+typedef struct _SOFSPEAKER_SNAPSHOT {
+    ULONG Version, Mode, HostPosition, CapturedBytes;
+    ULONG Sscr0, Sscr1, Sssr, Sspsp, Sstsa, Sscr2, Sspsp2, Sscr3;
+} SOFSPEAKER_SNAPSHOT;

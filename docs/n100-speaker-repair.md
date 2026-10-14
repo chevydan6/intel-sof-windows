@@ -133,6 +133,32 @@ amplifier-off/DSP-baseline checks. The recording now shows a left-test 1 kHz
 component at 1.05–1.06 s, approximately -79.8/-88.1 dBFS at the two microphones,
 10.8/5.7 dB above each recording's largest pre-test component. Thus the earlier
 faint left recordings do not establish a dead channel. The physical heat/hearing
-observation for this pulse and the same-level right comparison are pending.
+observation for this pulse was subsequently cool, with nothing audible.
 Headphone audio services were restored afterward. The fresh amplifier query
 reported ready=1, active=0, output-low accepted and no faults.
+
+The same-level right test subsequently returned `0xF04`, full capture, zero
+status/cleanup errors and verified shutdown. The user again reported cool
+speakers and nothing audible. The right recording's 1 kHz component was
+-72.7/-67.8 dBFS at 1.05–1.055 s, approximately 11.0/12.2 dB higher than
+the previous right test, consistent with the 12.04 dB source increase.
+Harmonic-bin levels in this short pulse do not establish electrical distortion
+or the condition of the speakers. The channel difference could include
+placement, microphone response or hardware; no failure diagnosis is established.
+
+## Cached serial-interface observation
+
+The next diagnostic keeps the fixed -30.10 dBFS level unchanged and adds
+`IOCTL_SOFPROBE_SPEAKER_SNAPSHOT` (`0x226078`). During the existing pre-enable
+check it caches SSP1 control/status registers and the corresponding host
+position/capture-byte count. The read-only query returns that record without
+starting hardware. The capture script saves it before the cleanup restart as
+`.ssp.json`; it never reads the SSP audio FIFO or writes these registers.
+The planned hardware check is a dry run with the amplifier held off.
+
+SSP1's host BAR offset is already used by the existing firmware startup code.
+Register offsets and format/status fields follow the upstream
+[SOF SSP definitions](https://github.com/thesofproject/sof/blob/v2.2/src/include/sof/drivers/ssp.h).
+Host tests exercise the production snapshot routine against distinguishable
+register values and verify that the sampled words are not modified. This is
+configuration/error readback, not an electrical measurement of the pins.

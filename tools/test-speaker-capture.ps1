@@ -60,6 +60,12 @@ try {
  if($Pulse){$mode+=2}
  $code=[uint32](0x22A068+4*($mode-1))
  $bytes=[SofSpeakerCaptureClient]::Capture($paths[0],$code)
+ $s=[SofProbeClient]::Exchange($paths[0],0x226078,$null)
+ if($s.Length -ne 12){throw 'Malformed speaker snapshot'}
+ $snapshot=[ordered]@{Version=$s[0];Mode=$s[1];HostPosition=$s[2];CapturedBytes=$s[3]}
+ $names=@('SSCR0','SSCR1','SSSR','SSPSP','SSTSA','SSCR2','SSPSP2','SSCR3')
+ for($i=0;$i -lt 8;$i++){$snapshot[$names[$i]]=('0x{0:X8}' -f $s[4+$i])}
+ $snapshot | ConvertTo-Json | Tee-Object -FilePath ($Output+'.ssp.json') | Write-Host
  $w=New-Object uint32[] 16
  for($i=0;$i -lt 16;$i++){$w[$i]=[BitConverter]::ToUInt32($bytes,$i*4)}
  $r=[ordered]@{Version=$w[0];Stage=$w[1];Status=('0x{0:X8}' -f $w[2]);CleanupStatus=('0x{0:X8}' -f $w[3]);Bytes=$w[4];Position=$w[5];HdaStatus=('0x{0:X2}' -f $w[6]);ReplyError=('0x{0:X8}' -f $w[7]);Command=('0x{0:X8}' -f $w[8]);Component=$w[9];MaxPollUs=$w[10];ElapsedMs=$w[11];Rate=$w[12];Channels=$w[13];Bits=$w[14];SpeakerFlags=('0x{0:X8}' -f $w[15]);Channel=$Channel;Pulse=[bool]$Pulse}

@@ -24,6 +24,8 @@ def function(signature):
   depth+=(s[e]=='{')-(s[e]=='}');e+=1
  return s[a:e]
 struct=s[s.index('typedef struct {'):s.index('} SOFSPEAKER_CHECK;')+len('} SOFSPEAKER_CHECK;')]
+header=(root/'driver/sofprobe-ioctl.h').read_text()
+snapshot=re.search(r'typedef struct _SOFSPEAKER_SNAPSHOT \{.*?\} SOFSPEAKER_SNAPSHOT;',header,re.S)[0]
 c=r'''
 #include <stdint.h>
 #include <stddef.h>
@@ -48,7 +50,8 @@ typedef uint32_t *PULONG;typedef struct {int64_t QuadPart;} LARGE_INTEGER;
 #define READ_REGISTER_ULONG(p) (*(p))
 #define WRITE_REGISTER_UCHAR(p,v) (*(p)=(v))
 #define KeMemoryBarrier() ((void)0)
-typedef struct {uint8_t *ToneHda;BOOLEAN ToneDmaRunning;} CONTEXT,*PSOFPROBE_DEVICE_CONTEXT;
+'''+snapshot+r'''
+typedef struct {uint8_t *ToneHda;BOOLEAN ToneDmaRunning;uint8_t *SessionDsp;SOFSPEAKER_SNAPSHOT SpeakerSnapshot;} CONTEXT,*PSOFPROBE_DEVICE_CONTEXT;
 typedef struct {ULONG Bytes,Reserved,Command;} CAPTURE,*PSOFMIC_CAPTURE_RESULT;
 typedef struct {ULONG OnWrites;} SOFAMP_STATUS;
 #include "speaker-test-samples.h"
@@ -65,7 +68,7 @@ static NTSTATUS SofMicIpc(CONTEXT *c,const ULONG *words,CAPTURE *r){(void)c;(voi
 static void WdfIoTargetClose(void *p){assert(p);closed++;}
 static void WdfObjectDelete(void *p){assert(p);}
 static int KeDelayExecutionThread(int a,int b,LARGE_INTEGER *d){(void)a;(void)b;(void)d;return 0;}
-'''+function('static NTSTATUS\nSofSpeakerTick(')+'\n'+function('static NTSTATUS\nSofSpeakerStopOutput(')+r'''
+'''+function('static VOID\nSofSpeakerSnapshot(')+'\n'+function('static NTSTATUS\nSofSpeakerTick(')+'\n'+function('static NTSTATUS\nSofSpeakerStopOutput(')+r'''
 int main(void){
  LONG pcm[6144*2];
  for(ULONG ch=0;ch<2;ch++){
@@ -82,7 +85,10 @@ int main(void){
   SofSpeakerFillTestSamples(pcm,6144,ch);pcm[22]=0x7fffffff;
   assert(!SofSpeakerTestSamplesValid(pcm,6144,ch));
  }
- _Alignas(8) uint8_t registers[0x200]={0};CONTEXT ctx={registers,1};
+ _Alignas(8) uint8_t registers[0x200]={0},dsp[0x11100]={0};
+ CONTEXT ctx={.ToneHda=registers,.ToneDmaRunning=1,.SessionDsp=dsp};
+ ULONG offsets[8]={0x00,0x04,0x08,0x2c,0x30,0x40,0x44,0x48};
+ for(ULONG i=0;i<8;i++) *(PULONG)(dsp+0x11000+offsets[i])=0x100+i;
  *(PULONG)(registers+0x164)=384;
  for(ULONG mode=0;mode<=4;mode++){
   SofSpeakerFillTestSamples(pcm,6144,(mode-1)&1);
@@ -96,6 +102,15 @@ int main(void){
    now++;assert(SofSpeakerTick(&ctx,&t,&r)==0 && stops==1 && (r.Reserved&0x200));
    now+=1000000;assert(SofSpeakerTick(&ctx,&t,&r)==0 && starts==1 && stops==1);
   }else assert(starts==0 && stops==0);
+  if(mode){
+   assert(ctx.SpeakerSnapshot.Version==1 && ctx.SpeakerSnapshot.Mode==mode);
+   assert(ctx.SpeakerSnapshot.HostPosition==384 && ctx.SpeakerSnapshot.CapturedBytes==48000*8);
+   ULONG values[8];memcpy(values,&ctx.SpeakerSnapshot.Sscr0,sizeof(values));
+   for(ULONG i=0;i<8;i++){
+    assert(values[i]==0x100+i);
+    assert(*(PULONG)(dsp+0x11000+offsets[i])==0x100+i);
+   }
+  }
  }
  for(int fault=0;fault<3;fault++){
   SofSpeakerFillTestSamples(pcm,6144,0);

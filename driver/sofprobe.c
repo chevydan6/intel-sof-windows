@@ -61,6 +61,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     WDFIOTARGET HeadphoneCodec;
     BOOLEAN MicAttempted;
     BOOLEAN SpeakerTestAttempted;
+    SOFSPEAKER_SNAPSHOT SpeakerSnapshot;
     WDFCOMMONBUFFER MicRetainedBdl, MicRetainedAudio, MicRetainedTable;
 #endif
     WDFSPINLOCK AcxBufferLock;
@@ -2992,6 +2993,21 @@ SofProbeEvtIoDeviceControl(
     NTSTATUS status;
 
 #ifdef SOFPLAY_HEADPHONE
+    if (IoControlCode == IOCTL_SOFPROBE_SPEAKER_SNAPSHOT) {
+        SOFSPEAKER_SNAPSHOT *snapshot = NULL;
+        if (InputBufferLength != 0 || OutputBufferLength < sizeof(*snapshot)) {
+            WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
+            return;
+        }
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*snapshot), (PVOID *)&snapshot, NULL);
+        if (NT_SUCCESS(status)) {
+            WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+            *snapshot = context->SpeakerSnapshot;
+            WdfWaitLockRelease(context->AcxPowerLock);
+        }
+        WdfRequestCompleteWithInformation(Request, status, NT_SUCCESS(status) ? sizeof(*snapshot) : 0);
+        return;
+    }
     // Explicit fixed speaker check; the normal endpoint remains headphones.
     if (IoControlCode >= IOCTL_SOFPROBE_SPEAKER_DRY_LEFT &&
         IoControlCode <= IOCTL_SOFPROBE_SPEAKER_PULSE_RIGHT &&

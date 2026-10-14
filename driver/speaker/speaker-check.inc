@@ -12,6 +12,25 @@ typedef struct {
     const LONG *Samples;
 } SOFSPEAKER_CHECK;
 
+static VOID
+SofSpeakerSnapshot(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, ULONG position, ULONG bytes)
+{
+    SOFSPEAKER_SNAPSHOT *s = &c->SpeakerSnapshot;
+    // The existing session maps the complete 1 MiB DSP BAR. SSP1 is at 0x11000;
+    // use only control/status registers, never SSDR (the FIFO data port).
+    s->Mode = test->Mode; s->HostPosition = position; s->CapturedBytes = bytes;
+    if (c->SessionDsp == NULL) return;
+    s->Sscr0 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11000));
+    s->Sscr1 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11004));
+    s->Sssr = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11008));
+    s->Sspsp = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x1102c));
+    s->Sstsa = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11030));
+    s->Sscr2 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11040));
+    s->Sspsp2 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11044));
+    s->Sscr3 = READ_REGISTER_ULONG((PULONG)(c->SessionDsp + 0x11048));
+    s->Version = 1;
+}
+
 static NTSTATUS
 SofSpeakerAmpCommand(SOFSPEAKER_CHECK *test, ULONG code, SOFAMP_STATUS *out)
 {
@@ -92,6 +111,7 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
         c->AcxRunCalls || InterlockedCompareExchange(&c->AcxStreamClaimed,0,0))
         return STATUS_INVALID_DEVICE_STATE;
     c->SpeakerTestAttempted = TRUE;
+    RtlZeroMemory(&c->SpeakerSnapshot, sizeof(c->SpeakerSnapshot));
     status = SofSpeakerOpenAmp(device, test);
     if (!NT_SUCCESS(status)) return status;
     status = HeadphoneCodecCommand(c->HeadphoneCodec, IOCTL_CODEC_STOP);
@@ -151,6 +171,7 @@ SofSpeakerTick(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTU
                                        (test->Mode - 1) & 1))
             return STATUS_DEVICE_DATA_ERROR;
         test->Checked = TRUE; result->Reserved |= 0xC00;
+        SofSpeakerSnapshot(c, test, pos, result->Bytes);
         if (test->Mode >= 3) {
             test->PulseStart = KeQueryInterruptTime();
             status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_START, &state);
