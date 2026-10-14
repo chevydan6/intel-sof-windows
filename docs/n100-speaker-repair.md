@@ -532,3 +532,22 @@ level. Amplifier off, headphone services restored and Ubuntu input gain 1.00
 were verified. Post-test temperature feedback remains pending; the next
 controlled check is the left speaker at this level, not another right-side
 increase. Short successful tests do not establish sustained-playback safety.
+
+
+After confirmation that both speakers were still cool, the left speaker ran
+the same -12.04 dBFS, two-second test. Flags `0x1F09`, full capture and zero
+capture/cleanup errors confirm completion. Saved amplifier status records one
+enable, successful stop and no fault/watchdog trip. Headphone services and
+Ubuntu microphone gain were restored. Both recordings show approximately
+1.990-1.995 seconds of alternating notes with no clipping after the capture
+startup transient. The user reports the left speaker is clear and both remain
+cool, completing subjective checks of both channels at this test level.
+
+A remaining observation is channel loudness: the internal microphones recorded
+the left note bands about 12.0-17.7 dB below the right at identical programmed
+peak level. This is an acoustic comparison, not an electrical gain measurement;
+placement, room/lid acoustics, noise and speaker condition remain possible
+contributors. The software uses the same sample values and gain for both
+channels. Asked the user whether the left was noticeably quieter; response
+pending. Do not infer speaker damage or treat the entire speaker repair as
+complete. Sustained normal playback is still held and unvalidated.
