@@ -138,12 +138,8 @@ SofPlayPreparePcm(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     Context->AcxStartupStage = 5;
     pcm[6] = 84; pcm[8] = tone.PageTableAddressLow;
     pcm[9] = SOFPROBE_TONE_PAGES; pcm[10] = SOFPROBE_TONE_BYTES;
-    pcm[15] = 2; pcm[17] = 48000; pcm[18] = 0x00020001;
-    pcm[19] = 0x00040004; pcm[20] = SOFPROBE_TONE_PERIOD_BYTES; pcm[21] = 1;
-#ifdef SOFPLAY_HEADPHONE
-    pcm[15] = 1; // SOF_IPC_FRAME_S24_4LE
-    pcm[19] = 0x00040003; // 24 valid bits in a 32-bit container
-#endif
+    pcm[15] = SOFPROBE_PCM_FRAME_FORMAT; pcm[17] = 48000; pcm[18] = 0x00020001;
+    pcm[19] = SOFPROBE_PCM_SAMPLE_BYTES; pcm[20] = SOFPROBE_TONE_PERIOD_BYTES; pcm[21] = 1;
     return SofPlaySendStartupIpc(Context, pcm, sizeof(pcm));
 }
 

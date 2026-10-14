@@ -110,6 +110,13 @@ C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
 #define SOFPROBE_TONE_BYTES 49152UL
 #define SOFPROBE_TONE_PERIOD_BYTES 12288UL
 #define SOFPROBE_TONE_PAGES 12UL
+#ifdef SOFPLAY_HEADPHONE
+#define SOFPROBE_PCM_FRAME_FORMAT 1UL // SOF_IPC_FRAME_S24_4LE
+#define SOFPROBE_PCM_SAMPLE_BYTES 0x00040003UL // container 4, valid 3
+#else
+#define SOFPROBE_PCM_FRAME_FORMAT 2UL // SOF_IPC_FRAME_S32_LE
+#define SOFPROBE_PCM_SAMPLE_BYTES 0x00040004UL
+#endif
 
 #ifdef SOFPLAY_INTEGRATED
 static NTSTATUS SofPlayRearmPcmLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context);
@@ -2713,9 +2720,9 @@ SofProbeExchangeHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
             words[8] != tableAddress.LowPart ||
             words[9] != SOFPROBE_TONE_PAGES ||
             words[10] != SOFPROBE_TONE_BYTES ||
-            words[14] != 0 || words[15] != 2 ||
+            words[14] != 0 || words[15] != SOFPROBE_PCM_FRAME_FORMAT ||
             words[17] != 48000 || words[18] != 0x00020001 ||
-            words[19] != 0x00040004 ||
+            words[19] != SOFPROBE_PCM_SAMPLE_BYTES ||
             words[20] != SOFPROBE_TONE_PERIOD_BYTES || words[21] != 1) {
             return STATUS_INVALID_PARAMETER;
         }
