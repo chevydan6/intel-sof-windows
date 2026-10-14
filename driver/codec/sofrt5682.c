@@ -28,6 +28,8 @@ typedef struct _CODEC_CONTEXT {
     BOOLEAN Prepared;
     NTSTATUS LastStatus;
     ULONG HpMute, DacControl, DigitalPower;
+    ULONG AuditionStage;
+    NTSTATUS AuditionStatus;
 } CODEC_CONTEXT;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(CODEC_CONTEXT, CodecContext);
 
@@ -37,9 +39,9 @@ static VOID Report(WDFDEVICE device, ULONG stage, NTSTATUS status)
     CODEC_CONTEXT *c = CodecContext(device);
     const PCWSTR names[] = { L"CodecStage", L"CodecStatus", L"CodecDeviceId",
         L"CodecVendorId", L"CodecVersionId", L"CodecReads", L"CodecInitialized",
-        L"CodecHpMute", L"CodecDacControl", L"CodecDigitalPower" };
+        L"CodecHpMute", L"CodecDacControl", L"CodecDigitalPower", L"CodecAuditionStage", L"CodecAuditionStatus" };
     ULONG values[] = { stage, (ULONG)status, c->DeviceId, c->VendorId, c->VersionId, c->Reads,
-        c->Initialized, c->HpMute, c->DacControl, c->DigitalPower };
+        c->Initialized, c->HpMute, c->DacControl, c->DigitalPower, c->AuditionStage, (ULONG)c->AuditionStatus };
     ULONG i;
     if (NT_SUCCESS(WdfDeviceOpenRegistryKey(device, PLUGPLAY_REGKEY_DEVICE,
             KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES, &key))) {
@@ -125,6 +127,7 @@ static NTSTATUS WriteRegister(WDFDEVICE device, USHORT reg, USHORT value)
 
 #include "rt5682-init.h"
 #include "rt5682-playback.h"
+#include "rt5682-audition.h"
 
 static NTSTATUS ValidateAndSaveCrs(WDFDEVICE device)
 {
@@ -317,14 +320,22 @@ VOID CodecControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
     CODEC_STATUS *result;
     NTSTATUS status;
     if (inputBytes != 0 || outputBytes < sizeof(*result) ||
-        (code != IOCTL_CODEC_QUERY && code != IOCTL_CODEC_PREPARE && code != IOCTL_CODEC_STOP)) {
+        (code != IOCTL_CODEC_QUERY && code != IOCTL_CODEC_PREPARE && code != IOCTL_CODEC_STOP && code != IOCTL_CODEC_AUDITION)) {
         WdfRequestComplete(request, STATUS_INVALID_PARAMETER);
         return;
     }
     status = WdfRequestRetrieveOutputBuffer(request, sizeof(*result), (PVOID *)&result, NULL);
     if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
     if (!c->Identified || c->I2c == NULL) { WdfRequestComplete(request, STATUS_DEVICE_NOT_READY); return; }
-    if (code == IOCTL_CODEC_STOP) {
+    if (code == IOCTL_CODEC_AUDITION) {
+        if (!c->Prepared || !c->Initialized) {
+            WdfRequestComplete(request, STATUS_DEVICE_NOT_READY);
+            return;
+        }
+        status = CodecAudition(device, &c->AuditionStage);
+        c->AuditionStatus = status;
+        c->Initialized = c->Prepared = FALSE;
+    } else if (code == IOCTL_CODEC_STOP) {
         status = CodecResetMuted(device);
         c->Initialized = c->Prepared = FALSE;
     } else if (code == IOCTL_CODEC_PREPARE) {
