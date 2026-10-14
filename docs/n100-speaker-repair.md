@@ -299,3 +299,31 @@ The independent Ubuntu capture had no clipping after its first second, with
 settled peaks below 0.0022 full scale. Normal headphone services and the original
 Ubuntu microphone volume were restored. The new -15.10 dBFS powered pulse has
 not been issued; it awaits temperature feedback after the preceding left pulse.
+
+After the user confirmed cool speakers, one -15.10 dBFS right pulse completed
+with flags `0xF04`, full capture and zero status/cleanup errors. Saved amplifier
+status shows exactly one enable, inactive state, an accepted off request and
+no fault/watchdog trip. Headphone services and Ubuntu microphone volume were
+restored. The Ubuntu microphone's known first-second startup transient clipped,
+but no samples clipped afterward or in either microphone's pulse window.
+
+The Lenovo pulse measured -55.24/-48.81 dBFS near 1.055-1.060 s. The independent
+Ubuntu pulse measured -45.79/-46.08 dBFS near 8.175 s, approximately 39 dB above
+its pre-test 1 kHz background. Twenty-millisecond fits give second-through-fifth
+harmonics of 2.90/4.61 percent on Ubuntu and 13.06/6.10 percent on Lenovo; the
+second harmonic dominates. Ubuntu residual broadband noise is about 6 percent
+of the fitted fundamental RMS. Visual inspection shows no obvious flat-topped
+clipping. These are recordings of the complete acoustic/microphone path, not
+calibrated amplifier THD or proof of undamaged speakers.
+
+Hold escalation at this point. Prepare a comparison at the previous -18.06 dBFS
+level, preserving the current microphone gain, 32-bit recording, settling period
+and laptop placement. Earlier lower-level recordings used different external
+recording settings and cannot establish a controlled distortion-versus-level
+comparison. Temperature/hearing feedback after the -15.10 dBFS pulse is pending;
+no further powered pulse has been issued.
+
+The verified lower-level package was restored as `oem50.inf`, version
+`8.54.47.948`, with held DSP/no-DMA checks passing. A fresh amplifier query is
+ready, inactive, off-request accepted and fault-free. Headphone services were
+started again. The matched lower-level recording is prepared but has not run.
