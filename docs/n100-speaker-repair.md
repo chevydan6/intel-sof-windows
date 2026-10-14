@@ -501,3 +501,18 @@ enables, inactive state, accepted off request and no fault/watchdog trip.
 Headphone audio services were restored. No two-second powered test or new
 level increase has been performed; awaiting current physical temperature
 feedback after the earlier audible left pulse.
+
+
+After the user confirmed the speakers were fine/cool, the first powered
+right-channel two-second listening test at -18.06 dBFS completed with flags
+`0x1F08`, full capture and zero capture/cleanup errors. The saved pre-reset
+amplifier status records exactly one enable, inactive/off-request state,
+zero faults and zero watchdog trips. Parent reset and headphone service
+restoration completed, and Ubuntu microphone gain returned to its original 1.00.
+
+Both microphone recordings contain the approximately two-second sequence
+(internal threshold span 1.995 seconds; external 1.955/1.995 seconds). Neither
+recording clips after the known Ubuntu startup transient is excluded. This
+only establishes recorder headroom, not absence of speaker distortion.
+The user reports that it sounds fine. Current post-test temperature feedback
+is pending before the prepared +6.02 dB step; no louder powered test occurred.
