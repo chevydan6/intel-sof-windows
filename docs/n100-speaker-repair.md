@@ -59,3 +59,34 @@ ignored build artifacts. Host tests execute the real fixed sample generator,
 pulse timing and shutdown ordering, and check the IPC graph against the ABI.
 Hardware dry-run and supervised pulse results must be recorded before claiming
 speaker playback repaired. No continuous speaker endpoint is enabled by this work.
+
+## Initial hardware results
+
+Diagnostic source `b093791` passed WDK/INF and host checks in
+[build 38533829631](https://github.com/chevydan6/windows-sof/actions/runs/38533829631)
+and was installed as `oem45.inf`, version `8.15.46.10`.
+
+The left dry run returned version 2, stage 23, flags `0x401`, all 1,920,000
+capture bytes, and zero status/cleanup errors. Amplifier accepted-high count
+remained zero. The first left pulse returned flags `0x703`, full capture and
+zero errors. Accepted-high count increased exactly once; afterward active=0,
+output-low accepted, fault=0 and watchdog trips=0. Both tests verified the
+DSP baseline and muted headphone codec after the parent-device restart.
+No Windows reboot was performed.
+
+The recording does not establish audible speaker output or distortion quality:
+the maximum 1 kHz component in 10 ms windows around the expected pulse was
+approximately -89/-89 dBFS at the two microphones, comparable to background
+noise. Neither recording clipped. A low microphone signal is not evidence
+that the speaker waveform is clean. Recordings and analysis remain private
+under the ignored build directory.
+
+Further powered tests await the user's physical temperature observation.
+The driver has no temperature or speaker-current measurement, and accepted
+GPIO requests alone cannot establish actual voltage or thermal safety.
+Continuous speaker playback remains disabled; the ordinary headphone audio
+services were restored after this diagnostic.
+The fresh amplifier query after restoration reported ready=1, active=0,
+output-low accepted and no faults. Its counters had reset to on=0/off=1;
+these counters are scoped to a hardware preparation, not a persistent test
+history. The saved pre-restart pulse result preserves the one-enable evidence.
