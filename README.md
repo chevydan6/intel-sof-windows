@@ -13,8 +13,8 @@ measurement of temperature or proof that the hardware fault is resolved. See the
 Normal headphone playback now works through Windows applications on the target.
 Stream start/stop, repeated playback, physical jack removal/reinsertion, Windows
 volume/mute, and acoustic tone capture have been verified. The RT5682 output
-powers down when its stream stops. A calibrated -12.04 dB PCM ceiling permits
-12.04 dB more output than the original headphone build, with Windows volume
+powers down when its stream stops. A fixed -9.54 dB PCM ceiling permits
+14.54 dB more output than the original headphone build, with Windows volume
 available below that ceiling.
 See [headphone playback and distortion checks](docs/n100-headphone-playback.md).
 The built-in microphones support [bounded diagnostic recording](docs/n100-microphone-capture.md),

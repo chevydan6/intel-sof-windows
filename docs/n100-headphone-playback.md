@@ -26,7 +26,7 @@ closing I2C, without waiting for its callback while holding its lock.
 
 Normal playback uses unity DAC gain (`0xaeae`, per the Linux RT5682 volume
 control). The current source converts left-aligned S32 PCM to S24_4LE by
-dividing by 1,024: format conversion plus 12.04 dB attenuation. Windows endpoint
+dividing by 768: format conversion plus 9.54 dB attenuation. Windows endpoint
 volume can further attenuate this fixed ceiling. The older isolated audition
 still uses -39 dB DAC gain, but its test wrapper is superseded for the normal
 playback package. No arbitrary gain/register controls were added.
@@ -210,3 +210,17 @@ speaker thermal hold. All test tasks were removed. Audio services are running
 with automatic startup. Windows endpoint volume was left at -6 dB, unmuted,
 for a first listen: about +6.04 dB versus the original full-volume output,
 with another 6 dB available up to the new ceiling. No OS reboot was performed.
+
+
+### Requested additional small increase
+
+The user requested a little more output after the previous calibration and
+had already raised Windows endpoint volume to 0 dB. The source ceiling was
+changed from 1/4 to 1/3 (+2.50 dB), using signed division by 768 for PCM
+conversion plus attenuation. Full-scale values remain within 24-bit bounds
+(-2,796,202 through 2,796,202). Status reports 9.54 dB attenuation.
+
+This lies between the previous -12 and -6 dB acoustic checks; it is not a
+new acoustically certified clean maximum. No fresh audible test tones are
+started for this adjustment because headphone placement is not confirmed.
+The codec's analog gain and speaker hold remain unchanged.
