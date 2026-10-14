@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Read SSP1 hardware configuration directly from an ALSA ABI-5 topology.
+"""Read an SSP hardware configuration directly from an ALSA ABI-5 topology.
 
 Some alsatplg text decoders omit hw_config values. Layouts below follow Linux
 include/uapi/sound/asoc.h. This tool does not load firmware or touch hardware.
@@ -37,7 +37,7 @@ class Link(c.LittleEndianStructure):
                  ('hw_config', Hw * 8)] + [(n, c.c_uint32) for n in
                  ('num_hw_configs', 'default_hw_config_id', 'flag_mask', 'flags', 'priv_size')])
 
-def inspect(path):
+def inspect(path, link_name='SSP1-Codec'):
     data = path.read_bytes()
     offset = 0
     results = []
@@ -58,7 +58,7 @@ def inspect(path):
                     raise ValueError('Unsupported link layout')
                 if pos + link.size + link.priv_size > end:
                     raise ValueError('Truncated link private data')
-                if link.name == b'SSP1-Codec':
+                if link.name == link_name.encode('ascii'):
                     for hw in link.hw_config[:link.num_hw_configs]:
                         if hw.size != c.sizeof(Hw):
                             raise ValueError('Unsupported hardware configuration layout')
@@ -69,11 +69,12 @@ def inspect(path):
                 raise ValueError('Unexpected trailing link data')
         offset = end
     if not results:
-        raise ValueError('No SSP1-Codec configuration found')
-    return {'sha256': hashlib.sha256(data).hexdigest(), 'SSP1-Codec': results}
+        raise ValueError(f'No {link_name} configuration found')
+    return {'sha256': hashlib.sha256(data).hexdigest(), link_name: results}
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('topology', type=pathlib.Path)
+    parser.add_argument('--link', default='SSP1-Codec')
     args = parser.parse_args()
-    print(json.dumps(inspect(args.topology), indent=2))
+    print(json.dumps(inspect(args.topology, args.link), indent=2))

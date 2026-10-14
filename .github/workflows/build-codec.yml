@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'driver/codec/**'
+      - 'tools/test-codec-transport.py'
+      - 'tools/test-codec-init.py'
       - '.github/workflows/build-codec.yml'
   workflow_dispatch:
 
@@ -11,6 +13,12 @@ permissions:
   contents: read
 
 jobs:
+  transport-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/test-codec-transport.py
+      - run: python3 tools/test-codec-init.py
   build:
     runs-on: windows-2022
     steps:

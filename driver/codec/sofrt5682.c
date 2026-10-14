@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// First RT5682 bring-up: identify the codec through its ACPI I2C connection.
-// Selects I2C mode, but never powers DACs, audio clocks, or speaker GPIOs.
+// RT5682 bring-up through ACPI I2C: identify, calibrate, then remain muted.
+// No stream, audio clocks, user register access, or speaker GPIO operation.
 #include <ntddk.h>
 #include <wdf.h>
 #include <spb.h>
@@ -21,6 +21,9 @@ typedef struct _CODEC_CONTEXT {
     WDFIOTARGET I2c;
     ULONG DeviceId, VendorId, VersionId;
     ULONG Reads;
+    BOOLEAN Identified;
+    BOOLEAN Initialized;
+    ULONG HpMute, DacControl, DigitalPower;
 } CODEC_CONTEXT;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(CODEC_CONTEXT, CodecContext);
 
@@ -29,8 +32,10 @@ static VOID Report(WDFDEVICE device, ULONG stage, NTSTATUS status)
     WDFKEY key;
     CODEC_CONTEXT *c = CodecContext(device);
     const PCWSTR names[] = { L"CodecStage", L"CodecStatus", L"CodecDeviceId",
-        L"CodecVendorId", L"CodecVersionId", L"CodecReads" };
-    ULONG values[] = { stage, (ULONG)status, c->DeviceId, c->VendorId, c->VersionId, c->Reads };
+        L"CodecVendorId", L"CodecVersionId", L"CodecReads", L"CodecInitialized",
+        L"CodecHpMute", L"CodecDacControl", L"CodecDigitalPower" };
+    ULONG values[] = { stage, (ULONG)status, c->DeviceId, c->VendorId, c->VersionId, c->Reads,
+        c->Initialized, c->HpMute, c->DacControl, c->DigitalPower };
     ULONG i;
     if (NT_SUCCESS(WdfDeviceOpenRegistryKey(device, PLUGPLAY_REGKEY_DEVICE,
             KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES, &key))) {
@@ -88,6 +93,33 @@ static NTSTATUS SelectI2cMode(WDFDEVICE device)
     if (NT_SUCCESS(status) && transferred != sizeof(bytes)) return STATUS_DEVICE_DATA_ERROR;
     return status;
 }
+
+static VOID CodecDelay(ULONG milliseconds)
+{
+    LARGE_INTEGER delay;
+    delay.QuadPart = -(LONGLONG)milliseconds * 10000;
+    (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+}
+
+static NTSTATUS WriteRegister(WDFDEVICE device, USHORT reg, USHORT value)
+{
+    CODEC_CONTEXT *c = CodecContext(device);
+    UCHAR bytes[4] = { (UCHAR)(reg >> 8), (UCHAR)reg,
+        (UCHAR)(value >> 8), (UCHAR)value };
+    WDF_MEMORY_DESCRIPTOR input;
+    WDF_REQUEST_SEND_OPTIONS options;
+    ULONG_PTR transferred = 0;
+    NTSTATUS status;
+    if (!c->Identified || c->I2c == NULL) return STATUS_DEVICE_NOT_READY;
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&input, bytes, sizeof(bytes));
+    WDF_REQUEST_SEND_OPTIONS_INIT(&options, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+    WDF_REQUEST_SEND_OPTIONS_SET_TIMEOUT(&options, WDF_REL_TIMEOUT_IN_SEC(2));
+    status = WdfIoTargetSendWriteSynchronously(c->I2c, NULL, &input, NULL, &options, &transferred);
+    if (NT_SUCCESS(status) && transferred != sizeof(bytes)) return STATUS_DEVICE_DATA_ERROR;
+    return status;
+}
+
+#include "rt5682-init.h"
 
 static NTSTATUS ValidateAndSaveCrs(WDFDEVICE device)
 {
@@ -161,6 +193,8 @@ NTSTATUS CodecPrepare(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST translate
     c->Connection.QuadPart = 0;
     c->DeviceId = c->VendorId = c->VersionId = MAXULONG;
     c->Reads = 0;
+    c->Identified = c->Initialized = FALSE;
+    c->HpMute = c->DacControl = c->DigitalPower = MAXULONG;
     Report(device, 1, STATUS_PENDING);
     status = ValidateAndSaveCrs(device);
     if (!NT_SUCCESS(status)) { Report(device, 1, status); return status; }
@@ -216,9 +250,25 @@ NTSTATUS CodecEnter(WDFDEVICE device, WDF_POWER_DEVICE_STATE previous)
     status = ReadRegister(device, 0x00fe, &c->VendorId);
     if (!NT_SUCCESS(status)) goto finish;
     status = ReadRegister(device, 0x00fd, &c->VersionId);
+    if (!NT_SUCCESS(status)) goto finish;
+    if (c->VendorId != 0x10ec) { status = STATUS_DEVICE_CONFIGURATION_ERROR; goto finish; }
+    c->Identified = TRUE;
+    Report(device, 4, STATUS_PENDING);
+    status = CodecInitializeMuted(device);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = ReadRegister(device, RT5682_HP_CTRL_1, &c->HpMute);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = ReadRegister(device, RT5682_HP_CTRL_2, &c->DacControl);
+    if (!NT_SUCCESS(status)) goto finish;
+    status = ReadRegister(device, RT5682_PWR_DIG_1, &c->DigitalPower);
+    if (!NT_SUCCESS(status)) goto finish;
+    if ((c->HpMute & 0x8080) != 0x8080 || (c->DacControl & 0xe000) != 0x8000 ||
+        c->DigitalPower != 0) { status = STATUS_DEVICE_DATA_ERROR; goto finish; }
+    c->Initialized = TRUE;
 finish:
-    Report(device, 3, status);
+    Report(device, c->Identified ? 5 : 3, status);
     if (!NT_SUCCESS(status) && c->I2c != NULL) {
+        if (c->Identified) (VOID)CodecResetMuted(device);
         WdfObjectDelete(c->I2c);
         c->I2c = NULL;
     }
@@ -228,13 +278,18 @@ finish:
 NTSTATUS CodecExit(WDFDEVICE device, WDF_POWER_DEVICE_STATE target)
 {
     CODEC_CONTEXT *c = CodecContext(device);
+    NTSTATUS status = STATUS_SUCCESS;
     UNREFERENCED_PARAMETER(target);
     if (c->I2c != NULL) {
+        if (c->Identified) status = CodecResetMuted(device);
+        c->Initialized = FALSE;
+        Report(device, 6, status);
         WdfIoTargetClose(c->I2c);
         WdfObjectDelete(c->I2c);
         c->I2c = NULL;
     }
-    return STATUS_SUCCESS;
+    c->Identified = FALSE;
+    return status;
 }
 
 NTSTATUS CodecRelease(WDFDEVICE device, WDFCMRESLIST resources)

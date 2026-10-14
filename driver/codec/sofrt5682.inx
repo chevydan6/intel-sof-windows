@@ -1,5 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-only
-; RT5682 codec identification over the ACPI-provided I2C connection.
+; RT5682 codec identification and muted calibration over the ACPI-provided I2C connection.
 
 [Version]
 Signature="$Windows NT$"
@@ -55,6 +55,6 @@ KmdfLibraryVersion=$KMDFVERSION$
 
 [Strings]
 ProviderName="Open SOF Windows Project"
-DeviceName="RT5682 headphone codec (development, identification only)"
+DeviceName="RT5682 headphone codec (development, muted calibration)"
 ServiceName="SOF RT5682 headphone codec"
 DiskName="SOF RT5682 codec development package"
