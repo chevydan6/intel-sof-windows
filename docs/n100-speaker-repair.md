@@ -407,3 +407,29 @@ samples during an extended pulse, late callbacks stopping without renewal,
 and shutdown ordering. Existing amplifier lease/absolute-limit/ownership tests
 and microphone cleanup tests pass. Hardware validation starts with an
 amplifier-off run; an extended powered result is not yet available.
+
+Source `0481451` passed headphone build/INF verification 38545927470, ACX
+38545927530 and standalone probe 38545927599. The headphone package installed
+as `oem52.inf`, version `9.56.0.486`; its signature/hash, dormant DSP, stopped
+DMA and amplifier-off checks passed. The updated PowerShell capture script
+parsed successfully on the target without starting hardware.
+
+The new-build dry-right run returned flags `0xC02`, full capture, zero errors
+and zero amplifier enables. One subsequent extended right pulse at -18.06
+dBFS returned flags `0x1F06`, confirming enable, lease renewal and explicit
+stop. Capture and cleanup succeeded, and the saved amplifier status shows one
+enable, inactive state, off-request accepted, zero faults and zero watchdog
+trips. Headphone services and the original Ubuntu microphone volume were
+restored. No normal speaker endpoint was enabled.
+
+The external recording contains approximately 107 ms of tone above its
+minus-6-dB envelope threshold; internal microphones give 104-107 ms. This is
+an acoustic-envelope measurement, not the electrical GPIO-on interval. The
+nominal 120 ms includes setup and the acoustic onset/decay do not define its
+software deadline. No samples clipped after the Ubuntu capture-start transient.
+A roughly 57 ms central-window fit on Ubuntu gives 1000.18/1000.11 Hz,
+second-through-fifth harmonic ratios 2.51/2.74 percent and broadband residual
+13.6/16.1 percent relative to fundamental RMS. Results vary with microphone and
+window, so they remain acoustic-chain estimates, not amplifier THD or proof of
+speaker integrity. User hearing/temperature feedback after this longer test is
+pending; do not infer sustained-playback safety from its completed shutdown.
