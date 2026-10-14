@@ -138,6 +138,32 @@ int main(void){
     SofAmpFileCleanup(&a);assert(!testDevice.State.Active && testDevice.State.OutputRequest==1);
     setup(&testDevice.State);r=request(0,&a,IOCTL_SOFAMP_START,0,48);assert(r.status==0);
     r=request(1,&b,IOCTL_SOFAMP_STOP,0,48);assert(r.status==0 && r.out.OutputRequest==1 && !r.out.Active);
+
+    // Listening is a separate kernel-only command, preserving ordinary START.
+    setup(&testDevice.State);
+    r=request(1,&a,IOCTL_SOFAMP_START_LISTEN,0,48);
+    assert(r.status==STATUS_ACCESS_DENIED && highWrites==0);
+    assert(SofAmpStateStartBounded(&testDevice.State,&testDevice,&a,2201)==STATUS_INVALID_PARAMETER);
+    r=request(0,&a,IOCTL_SOFAMP_START_LISTEN,0,48);
+    assert(r.status==0 && r.out.Version==2 && r.out.MaximumMs==2200);
+    ULONGLONG begun=clockMs;
+    assert(testDevice.State.MaximumDeadline==begun+2200);
+    // No active START can reset ownership or the absolute deadline.
+    r=request(0,&a,IOCTL_SOFAMP_START_LISTEN,0,48);assert(r.status==STATUS_DEVICE_BUSY);
+    for(int step=1;step<=54;step++){
+      clockMs=begun+40*step;
+      r=request(0,&a,IOCTL_SOFAMP_RENEW,0,48);assert(r.status==0 && r.out.Active);
+      assert(testDevice.State.Deadline<=begun+2200);
+    }
+    clockMs=begun+2200;SofAmpTimer(&testDevice);
+    assert(!testDevice.State.Active && testDevice.State.Faulted && testDevice.State.WatchdogTrips==1);
+    setup(&testDevice.State);
+    r=request(0,&a,IOCTL_SOFAMP_START_LISTEN,0,48);assert(r.status==0);
+    clockMs+=100;SofAmpTimer(&testDevice); // Missing heartbeat still shuts off at 100 ms.
+    assert(!testDevice.State.Active && testDevice.State.Faulted);
+    setup(&testDevice.State);
+    r=request(0,&a,IOCTL_SOFAMP_START_LISTEN,0,48);assert(r.status==0);
+    SofAmpFileCleanup(&a);assert(!testDevice.State.Active && testDevice.State.OutputRequest==1);
     puts("PASS: amp ownership, user-mode enable rejection, leases, watchdog, stale timers, cleanup and GPIO failures");
 }
 '''

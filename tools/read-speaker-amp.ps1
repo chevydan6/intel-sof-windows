@@ -49,10 +49,12 @@ $paths=@([SofAmpClient]::Paths())
 if($paths.Count -ne 1){throw 'Expected exactly one guarded amplifier interface'}
 $code=if($Stop){[uint32]0x22A504}else{[uint32]0x226500}
 $v=[SofAmpClient]::Exchange($paths[0],$code)
-if($v[0]-ne 1){throw 'Unexpected amplifier ABI'}
+if($v[0] -notin @(1,2)){throw 'Unexpected amplifier ABI'}
 if($CheckUserEnableRejected){
  if($v[2]-ne 0 -or $v[4]-ne 1 -or $v[5]-ne 0){throw 'Enable rejection check requires untouched off state'}
- foreach($forbidden in @([uint32]0x22A508,[uint32]0x22A50C)){
+ $commands=@([uint32]0x22A508,[uint32]0x22A50C)
+ if($v[0]-eq 2){$commands+= [uint32]0x22A510}
+ foreach($forbidden in $commands){
   $rejected=$false
   try{[SofAmpClient]::Exchange($paths[0],$forbidden)|Out-Null}
   catch{

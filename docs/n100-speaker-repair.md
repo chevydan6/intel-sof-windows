@@ -445,3 +445,44 @@ calibrated amplifier distortion. Headphone services and input volume were
 restored. The user reports that this beep sounds fine. Temperature feedback
 after the repeat remains pending; the next prepared check is the left channel
 at the same level and duration, with no further amplitude increase.
+
+
+## Two-second listening test with a larger level step
+
+After the repeat right pulse, the user confirmed cool speakers. The subsequent
+120 ms left pulse was audible and completed successfully with amplifier-off
+cleanup. Left acoustic recordings are weak and the fit residual is high;
+do not interpret those harmonic fits as speaker distortion. The user requested
+a longer changing sound and faster level progression. Post-left temperature
+feedback is still required before another powered test.
+
+New explicit modes 7/8 play a fixed two-second alternating 750/1000 Hz note loop
+at approximately -18.06 dBFS peak. Modes 9/10 use the identical waveform with
+exactly twice the sample amplitude (+6.02 dB, -12.04 dBFS peak). Each note is
+64 ms with 8 ms fades, generated deterministically from original synthetic
+samples. Both levels have zero summed DC, use only the selected speaker channel,
+and fit the existing 128 ms ring without live overwrites or allocation changes.
+Modes 11/12 run that waveform with the amplifier disabled. No arbitrary sound,
+volume or duration input is accepted. This is a changing-note listening test,
+not natural speech, normal music playback or a calibrated distortion measurement.
+
+Use `test-speaker-capture.ps1 -Listen` for a dry run, add `-Pulse` for the quiet
+listening test, and add `-Louder` for the explicit 6.02 dB step. The script
+rejects ambiguous combinations and saves level, duration and selected mode.
+The parent checks the complete fixed ring and advancing output DMA before each
+40 ms renewal, and stops at two seconds before considering further renewals.
+The existing cancellation, DMA-error and 50 ms polling-gap cleanup applies.
+
+A separate kernel-only amplifier START_LISTEN command (0x22A510) allows a
+2200 ms absolute ceiling. It retains the independent 100 ms lease, ownership,
+default-off behavior and latched faults. Ordinary START remains capped at
+250 ms; repeated START cannot extend an active lease. Status version 2 reports
+the supported listening cap, and mixed older/newer diagnostic clients fail
+validation before enabling output. These are software deadlines, not thermal
+measurements or a hardware cutoff. Ordinary Windows speaker playback stays held.
+
+Production-code host tests cover all modes, levels, channel isolation, zero DC,
+ring corruption, stalled DMA, missed renewal, late callback, user-mode rejection,
+owner cleanup, the unchanged short cap, the new absolute cap and shutdown order.
+Windows builds and amp-off hardware validation are pending. Do not increase the
+level automatically or infer sustained thermal safety from a completed test.

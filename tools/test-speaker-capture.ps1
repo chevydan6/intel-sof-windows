@@ -3,9 +3,11 @@
 # -Pulse explicitly requests one quiet short pulse; ordinary playback stays held.
 param([string]$Output = (Join-Path $PSScriptRoot 'speaker-check.wav'),
       [ValidateSet('Left','Right')][string]$Channel='Left', [switch]$Pulse,
-      [switch]$Extended)
+      [switch]$Extended, [switch]$Listen, [switch]$Louder)
 $ErrorActionPreference = 'Stop'
 if($Extended -and !$Pulse){throw 'Extended requires an explicit Pulse request'}
+if($Extended -and $Listen){throw 'Choose Extended or Listen'}
+if($Louder -and (!$Listen -or !$Pulse)){throw 'Louder requires Listen and Pulse'}
 $parent = 'PCI\VEN_8086&DEV_54C8&SUBSYS_00000000&REV_00\3&11583659&0&FB'
 Add-Type -TypeDefinition @'
 
@@ -62,14 +64,22 @@ try {
  if($Pulse){$mode+=2}
  $code=[uint32](0x22A068+4*($mode-1))
  if($Extended){$mode+=2;$code=[uint32](0x22A07C+4*($mode-5))}
+ if($Listen){
+  $mode=$(if($Channel-eq 'Left'){7}else{8})
+  if(!$Pulse){$mode+=4}elseif($Louder){$mode+=2}
+  $code=[uint32](0x22A084+4*($mode-7))
+  if($before.Version-ne 2 -or $before.LeaseMs-ne 100 -or $before.MaximumMs-ne 2200){throw 'Listening amplifier guard is not installed'}
+ }
  $bytes=[SofSpeakerCaptureClient]::Capture($paths[0],$code)
  $w=New-Object uint32[] 16
  for($i=0;$i -lt 16;$i++){$w[$i]=[BitConverter]::ToUInt32($bytes,$i*4)}
  $r=[ordered]@{Version=$w[0];Stage=$w[1];Status=('0x{0:X8}' -f $w[2]);CleanupStatus=('0x{0:X8}' -f $w[3]);Bytes=$w[4];Position=$w[5];HdaStatus=('0x{0:X2}' -f $w[6]);ReplyError=('0x{0:X8}' -f $w[7]);Command=('0x{0:X8}' -f $w[8]);Component=$w[9];MaxPollUs=$w[10];ElapsedMs=$w[11];Rate=$w[12];Channels=$w[13];Bits=$w[14];SpeakerFlags=('0x{0:X8}' -f $w[15]);Channel=$Channel;Pulse=[bool]$Pulse}
- $r['RequestedPulseMs']=$(if(!$Pulse){0}elseif($Extended){120}else{40})
+ $r['RequestedPulseMs']=$(if(!$Pulse){0}elseif($Listen){2000}elseif($Extended){120}else{40})
+ $r['Listen']=[bool]$Listen; $r['Louder']=[bool]$Louder
+ $r['SourcePeakDbfs']=$(if($Louder){-12.04}else{-18.06})
  $r | ConvertTo-Json | Tee-Object -FilePath ($Output+'.json') | Write-Host
  $expectedFlags=$mode -bor $(if($Pulse){0xF00}else{0xC00})
- if($Extended){$expectedFlags=$expectedFlags -bor 0x1000}
+ if($Extended -or ($Listen -and $Pulse)){$expectedFlags=$expectedFlags -bor 0x1000}
  if($w[15] -ne $expectedFlags){throw 'The requested speaker diagnostic did not finish'}
  if($w[0] -ne 2 -or $w[2] -ne 0 -or $w[3] -ne 0 -or $w[4] -ne 1920000 -or $bytes.Length -ne 1920064 -or $w[12] -ne 48000 -or $w[13] -ne 2 -or $w[14] -ne 32){throw 'Microphone capture failed; see JSON diagnostics'}
  $f=[IO.File]::Create($Output);$bw=New-Object IO.BinaryWriter($f)

@@ -161,10 +161,10 @@ VOID SofAmpControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
     WDFFILEOBJECT owner = WdfRequestGetFileObject(request);
     if (inputBytes != 0 || outputBytes < sizeof(*result) ||
         (code != IOCTL_SOFAMP_QUERY && code != IOCTL_SOFAMP_STOP &&
-         code != IOCTL_SOFAMP_START && code != IOCTL_SOFAMP_RENEW)) {
+         code != IOCTL_SOFAMP_START && code != IOCTL_SOFAMP_START_LISTEN && code != IOCTL_SOFAMP_RENEW)) {
         WdfRequestComplete(request, STATUS_INVALID_PARAMETER); return;
     }
-    if ((code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_RENEW) &&
+    if ((code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_START_LISTEN || code == IOCTL_SOFAMP_RENEW) &&
         WdfRequestGetRequestorMode(request) != KernelMode) {
         WdfRequestComplete(request, STATUS_ACCESS_DENIED); return;
     }
@@ -172,13 +172,15 @@ VOID SofAmpControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
     if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
     WdfWaitLockAcquire(c->Lock, NULL);
     if (!c->State.Ready) { status = STATUS_DEVICE_NOT_READY; goto done; }
-    if (code == IOCTL_SOFAMP_START) {
+    if (code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_START_LISTEN) {
         LARGE_INTEGER delay;
         // Match the board's sdmode-delay; the parent must establish valid,
         // quiet clocks/data before asking for an amplifier lease.
         delay.QuadPart = -(LONGLONG)SOFAMP_START_DELAY_MS * 10000;
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
-        status = SofAmpStateStart(&c->State, device, owner);
+        status = code == IOCTL_SOFAMP_START_LISTEN
+            ? SofAmpStateStartBounded(&c->State, device, owner, SOFAMP_LISTEN_MAXIMUM_MS)
+            : SofAmpStateStart(&c->State, device, owner);
         SofAmpArmTimer(c);
     } else if (code == IOCTL_SOFAMP_RENEW) {
         status = SofAmpStateRenew(&c->State, device, owner);
@@ -193,14 +195,14 @@ VOID SofAmpControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
         c->State.Faulted ? c->State.FaultStatus : status);
     if (NT_SUCCESS(status)) {
         RtlZeroMemory(result, sizeof(*result));
-        result->Version = 1; result->Ready = c->State.Ready;
+        result->Version = 2; result->Ready = c->State.Ready;
         result->Active = c->State.Active; result->Faulted = c->State.Faulted;
         result->OutputRequest = c->State.OutputRequest;
         result->OnWrites = c->State.OnWrites; result->OffWrites = c->State.OffWrites;
         result->WatchdogTrips = c->State.WatchdogTrips;
         result->FaultStatus = (ULONG)c->State.FaultStatus;
         result->CleanupStatus = (ULONG)c->State.CleanupStatus;
-        result->LeaseMs = SOFAMP_LEASE_MS; result->MaximumMs = SOFAMP_MAXIMUM_MS;
+        result->LeaseMs = SOFAMP_LEASE_MS; result->MaximumMs = SOFAMP_LISTEN_MAXIMUM_MS;
         WdfRequestSetInformation(request, sizeof(*result));
     }
 done:

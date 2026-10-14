@@ -3,16 +3,26 @@
 // DSP session; replaces the idle headphone PCM until a verified device reset.
 #include "../amp/amp-interface.h"
 #include "speaker-test-samples.h"
+#include "speaker-listen-samples.h"
 
 typedef struct {
     WDFIOTARGET Amp;
     BOOLEAN Configured, Triggered, Checked, Pulsed, Stopped;
-    ULONG Mode, InitialOnWrites, InitialPosition;
+    ULONG Mode, InitialOnWrites, InitialPosition, RenewalPosition;
     ULONGLONG PulseStart, PulseRenew;
     const LONG *Samples;
     ULONG PositionOffset;
     BOOLEAN PositionReady;
 } SOFSPEAKER_CHECK;
+
+static BOOLEAN
+SofSpeakerSamplesValid(SOFSPEAKER_CHECK *test)
+{
+    if (test->Mode >= 7)
+        return SofSpeakerListenSamplesValid(test->Samples, (test->Mode - 1) & 1,
+                                           test->Mode == 9 || test->Mode == 10);
+    return SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8, (test->Mode - 1) & 1);
+}
 
 static BOOLEAN
 SofSpeakerReadPosition(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, ULONG *out)
@@ -71,11 +81,11 @@ SofSpeakerAmpCommand(SOFSPEAKER_CHECK *test, ULONG code, SOFAMP_STATUS *out)
     status = WdfIoTargetSendIoctlSynchronously(test->Amp, NULL, code,
         NULL, &buffer, &options, &returned);
     if (!NT_SUCCESS(status)) return status;
-    if (returned != sizeof(*out) || out->Version != 1 || !out->Ready ||
+    if (returned != sizeof(*out) || out->Version != 2 || !out->Ready ||
         out->Faulted || out->FaultStatus || out->CleanupStatus ||
-        out->LeaseMs != 100 || out->MaximumMs != 250)
+        out->LeaseMs != 100 || out->MaximumMs != 2200)
         return STATUS_DEVICE_DATA_ERROR;
-    if (code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_RENEW) {
+    if (code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_START_LISTEN || code == IOCTL_SOFAMP_RENEW) {
         if (!out->Active || out->OutputRequest != 2 ||
             out->OnWrites != test->InitialOnWrites + 1)
             return STATUS_DEVICE_DATA_ERROR;
@@ -133,7 +143,7 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
     PUCHAR ring;
     ULONG i;
     NTSTATUS status;
-    if (test->Mode < 1 || test->Mode > 6 || c->SpeakerTestAttempted ||
+    if (test->Mode < 1 || test->Mode > 12 || c->SpeakerTestAttempted ||
         c->ToneDmaRunning || c->ToneTriggerActive || !c->TonePcmConfigured ||
         c->AcxRunCalls || InterlockedCompareExchange(&c->AcxStreamClaimed,0,0))
         return STATUS_INVALID_DEVICE_STATE;
@@ -155,8 +165,12 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
         status = SofMicIpc(c, messages[i], result);
         if (!NT_SUCCESS(status)) return status;
     }
-    SofSpeakerFillTestSamples((LONG *)ring, SOFPROBE_TONE_BYTES / 8,
-                             (test->Mode - 1) & 1);
+    if (test->Mode >= 7)
+        SofSpeakerFillListenSamples((LONG *)ring, (test->Mode - 1) & 1,
+                                   test->Mode == 9 || test->Mode == 10);
+    else
+        SofSpeakerFillTestSamples((LONG *)ring, SOFPROBE_TONE_BYTES / 8,
+                                 (test->Mode - 1) & 1);
     test->Samples = (const LONG *)ring;
     KeMemoryBarrier();
     table = WdfCommonBufferGetAlignedLogicalAddress(c->TonePageTable);
@@ -176,8 +190,7 @@ SofSpeakerPrepare(WDFDEVICE device, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTURE_RESU
     }
     test->PositionOffset = reply.ReplyWords[4]; test->PositionReady = TRUE;
     KeMemoryBarrier();
-    if (!SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8,
-                                   (test->Mode - 1) & 1))
+    if (!SofSpeakerSamplesValid(test))
         return STATUS_DEVICE_DATA_ERROR;
     c->TonePcmConfigured = TRUE;
     status = SofProbeToneHardware(c, &tone, 1);
@@ -203,33 +216,36 @@ SofSpeakerTick(PSOFPROBE_DEVICE_CONTEXT c, SOFSPEAKER_CHECK *test, PSOFMIC_CAPTU
         if (pos >= SOFPROBE_TONE_BYTES || pos == test->InitialPosition)
             return STATUS_DEVICE_DATA_ERROR;
         KeMemoryBarrier();
-        if (!SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8,
-                                       (test->Mode - 1) & 1))
+        if (!SofSpeakerSamplesValid(test))
             return STATUS_DEVICE_DATA_ERROR;
-        test->Checked = TRUE; result->Reserved |= 0xC00;
+        test->Checked = TRUE; test->RenewalPosition = pos; result->Reserved |= 0xC00;
         SofSpeakerSnapshot(c, test, pos, result->Bytes);
-        if (test->Mode >= 3) {
+        if (test->Mode >= 3 && test->Mode <= 10) {
+            ULONG startCode = test->Mode >= 7 ? IOCTL_SOFAMP_START_LISTEN : IOCTL_SOFAMP_START;
             test->PulseStart = KeQueryInterruptTime();
             test->PulseRenew = test->PulseStart;
-            status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_START, &state);
-            if (!NT_SUCCESS(status)) { result->Command = IOCTL_SOFAMP_START; return status; }
+            status = SofSpeakerAmpCommand(test, startCode, &state);
+            if (!NT_SUCCESS(status)) { result->Command = startCode; return status; }
             test->Pulsed = TRUE; result->Reserved |= 0x100;
         }
     }
     now = KeQueryInterruptTime();
     if (test->Pulsed && !test->Stopped &&
-        now - test->PulseStart >= (test->Mode >= 5 ? 1200000ULL : 400000ULL)) {
+        now - test->PulseStart >= (test->Mode >= 7 ? 20000000ULL : test->Mode >= 5 ? 1200000ULL : 400000ULL)) {
         status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_STOP, &state);
         if (!NT_SUCCESS(status)) { result->Command = IOCTL_SOFAMP_STOP; return status; }
         test->Stopped = TRUE; result->Reserved |= 0x200;
     } else if (test->Pulsed && !test->Stopped && test->Mode >= 5 &&
                now - test->PulseRenew >= 400000) {
-        // The amplifier retains its independent 100 ms lease and 250 ms
-        // absolute per-start ceiling. Renew only this explicit fixed test;
-        // a late callback must stop above, never extend the 120 ms target.
+        ULONG position = READ_REGISTER_ULONG((PULONG)(c->ToneHda + 0x164));
+        if (position >= SOFPROBE_TONE_BYTES || position == test->RenewalPosition)
+            return STATUS_DEVICE_DATA_ERROR;
+        test->RenewalPosition = position;
+        // Independent 100 ms lease; fixed absolute cap of 250 ms for
+        // short diagnostics or 2200 ms for the explicit listening command.
+        // Check the fixed parent stop deadline before any renewal.
         KeMemoryBarrier();
-        if (!SofSpeakerTestSamplesValid(test->Samples, SOFPROBE_TONE_BYTES / 8,
-                                       (test->Mode - 1) & 1))
+        if (!SofSpeakerSamplesValid(test))
             return STATUS_DEVICE_DATA_ERROR;
         status = SofSpeakerAmpCommand(test, IOCTL_SOFAMP_RENEW, &state);
         if (!NT_SUCCESS(status)) { result->Command = IOCTL_SOFAMP_RENEW; return status; }

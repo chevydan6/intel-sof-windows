@@ -22,6 +22,10 @@ the parent still holds SSP1 speaker playback. Headphones use their separate path
 - START takes ownership of the caller's file and grants a 100 ms software
   lease. Renewal can extend that lease, but never past 250 ms from START in
   this diagnostic revision. Repeated START cannot extend an active lease.
+- A separate kernel-only START_LISTEN command permits a fixed 2200 ms maximum
+  for a two-second parent-controlled listening test. The 100 ms heartbeat,
+  ownership and latched-fault rules still apply; ordinary START stays 250 ms.
+  Status version 2 reports the supported listening maximum in MaximumMs.
 - Expiration, owner-file cleanup, explicit STOP and D0 exit request shutdown.
   Closing a query handle does not interrupt another owner's lease.
 - Transfer failures or expired leases latch a fault and block further enables
