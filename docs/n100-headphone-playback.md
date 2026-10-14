@@ -25,7 +25,7 @@ Other query handles do not own or stop playback. D0 exit cancels the timer befor
 closing I2C, without waiting for its callback while holding its lock.
 
 Normal playback uses unity DAC gain (`0xaeae`, per the Linux RT5682 volume
-control) and retains the transport's fixed 1/16 (-24.08 dB) output ceiling.
+control) and uses the transport's fixed 1/8 (-18.06 dB) output ceiling.
 Windows volume is applied before that ceiling. The older isolated audition
 still uses -39 dB DAC gain, but its test wrapper is superseded for the normal
 playback package. No arbitrary gain/register controls were added.
@@ -116,3 +116,13 @@ Suspend/resume and surprise-removal recovery have not been hardware validated.
 Headset microphone/button controls and a normal Windows built-in microphone
 endpoint remain outside this headphone render implementation. The built-in
 microphones currently work through the diagnostic capture tool only.
+
+## Requested volume increase
+
+After confirming YouTube playback sounded correct, the user requested a small
+volume increase. Windows volume was already 0 dB and unmuted. The transport
+ceiling was raised from 1/16 to 1/8 (+6.02 dB); the codec and speaker hold were
+unchanged. Full-scale signed PCM conversion remains within 24-bit bounds with
+18.06 dB of headroom. The acoustic results above precede this gain increase.
+The status reader recognizes the earlier version-8 hardcoded speaker field
+and reports the actual attenuation for new headphone builds.

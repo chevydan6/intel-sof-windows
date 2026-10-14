@@ -88,7 +88,12 @@ int main(void) {
     UCHAR ring[SOFPROBE_TONE_BYTES] = {0};
     UCHAR packet[3840];
 #ifdef SOFPLAY_HEADPHONE
-    int32_t scaled = 0x5a5a5a5a / 4096;
+    int32_t scaled = 0x5a5a5a5a / 2048;
+    int32_t limits[] = {INT32_MIN, INT32_MAX, -2048, 0, 2048};
+    int32_t converted[5] = {0};
+    SofProbeAcxCopySpeakerSamples((UCHAR*)converted, (const UCHAR*)limits, sizeof(limits));
+    assert(converted[0] == -1048576 && converted[1] == 1048575);
+    assert(converted[2] == -1 && converted[3] == 0 && converted[4] == 1);
 #else
     int32_t scaled = SofPlayAttenuateSpeakerSample(0x5a5a5a5a);
 #endif
