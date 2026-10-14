@@ -93,6 +93,7 @@ typedef struct _SOFPROBE_ACX_STATUS {
     ULONG ContainerBits;
     ULONG ValidBits;
     ULONG SubFormat;
+    ULONG ThermalHold;
 } SOFPROBE_ACX_STATUS, *PSOFPROBE_ACX_STATUS;
 
 typedef struct _SOFPROBE_SNAPSHOT {

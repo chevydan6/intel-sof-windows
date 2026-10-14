@@ -1,0 +1,60 @@
+; SPDX-License-Identifier: GPL-2.0-only
+; PUJJOTEEN MX98360A shutdown-only GPIO client. No amplifier enable operation.
+
+[Version]
+Signature="$Windows NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderName%
+DriverVer=10/14/2026,0.1.0.0
+CatalogFile=sofamp.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[SourceDisksNames]
+1=%DiskName%,,,""
+
+[SourceDisksFiles]
+sofamp.sys=1,,
+
+[Manufacturer]
+%ProviderName%=Models,NTamd64.10.0...16299
+
+[Models.NTamd64.10.0...16299]
+%DeviceName%=Install,ACPI\MX98360A
+
+[Install.NT]
+CopyFiles=DriverFiles
+
+[Install.NT.HW]
+AddReg=DeviceSecurity
+
+[DeviceSecurity]
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+
+[DriverFiles]
+sofamp.sys
+
+[Install.NT.Services]
+AddService=sofamp,0x00000002,Service
+
+[Service]
+DisplayName=%ServiceName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\sofamp.sys
+
+[Install.NT.Wdf]
+KmdfService=sofamp,WdfSection
+
+[WdfSection]
+KmdfLibraryVersion=$KMDFVERSION$
+
+[Strings]
+ProviderName="Open SOF Windows Project"
+DeviceName="PUJJOTEEN speaker amplifier shutdown only (development)"
+ServiceName="SOF amplifier shutdown only"
+DiskName="SOF amplifier shutdown development package"

@@ -1,0 +1,40 @@
+# Amplifier thermal investigation, 2026-10-14
+
+Speaker playback remains stopped after Dan reported fuzzy/buzzy sound and very hot speakers. This review identifies missing amplifier enable control; it does not establish the thermal cause or whether a speaker is damaged. No playback, driver enable, installation, reboot, or GPIO write was performed during this review.
+
+Dan subsequently reports that the speakers seem to remain hot when not playing. AudioEndpointBuilder and Audiosrv were checked again and both are stopped. Asked for full shutdown, charger disconnection, and observation of whether the speaker area cools; that observation is pending. Residual heat versus ongoing heating has not been distinguished, and the actual heat source has not been measured. Do not interpret silence or disabled-device status as proof of amplifier electrical shutdown.
+
+Dan then restarted the laptop. Windows reports LastBootUpTime `2026-10-14 10:15:23` (target local time). After reconnecting, the SOF device still reports problem code 22, confirming the disable persisted across restart. Windows audio services had automatically restarted. No playback or device enable was requested. Post-restart cooling remains unconfirmed.
+
+Stopped both audio services again after this restart and verified both report Stopped. Their configured startup types were not changed.
+
+Dan subsequently confirmed that the speaker area is cooling. This is an observation after the restart with the audio device disabled; it neither proves speaker integrity nor establishes the earlier heat source. Work has moved to a shutdown-only GPIO client and an ACX build that holds all DSP startup/playback, described in [the amplifier driver notes](../driver/amp/README.md). Neither new package has yet been installed on the target.
+
+## Evidence from the target
+
+Read the target's firmware tables through Windows GetSystemFirmwareTable while the SOF PCI device remained disabled. The ACPI audio scope identifies `MX98360A`, not a software-programmable smart amplifier. Its resource is an exclusive, output-only GPIO at `\\_SB.PCI0.GPIO`, pin `0x004B` (75). The `sdmode-gpio` property is active high; `sdmode-delay` is 5 ms. The scope is `\\_SB.PCI0.HDAS.MAXM`. The audio controller's properties identify speaker topology `max98360a`, headphone topology `rt5682`, and microphone topology `2ch-pdm0`.
+
+Intel GPIO controller `ACPI\\INTC1057\\0` is present with status OK and service `iaLPSS2_GPIO2_ADL_N`. The SOF PCI device still reports problem code 22 (disabled). `ACPI\\MX98360A\\0` exists in the full PnP inventory but is not presently enumerated while the parent is disabled; that observation alone does not establish its earlier driver state. Audio services were verified stopped.
+
+Original DSDT/SSDT and analysis files are local under ignored `build/amp-review/`. Full SSDT disassembly encountered duplicate `CNMT` names. To inspect the audio resources, the two complete HDAS Scope objects at original SSDT offsets 11791..12033 and 12033..12156 were copied unchanged into a separate, checksum-correct analysis table. That extract disassembled successfully. The original firmware tables were not edited and no table was installed on the laptop. GetSystemFirmwareTable exposes only the first instance of a repeated table signature; this is not a complete firmware dump.
+
+## Missing control in the Windows prototype
+
+The driver has no GPIO resource-hub connection or amplifier enable operation. Stream pause sends SOF STOP and stops HDA DMA; D0 exit additionally stops the firmware session and powers down the DSP. None of those operations explicitly drives the amplifier enable pin low. Windows reporting the audio device disabled therefore does not independently prove the physical enable pin is low or that amplifier temperature is safe.
+
+The upstream Pujjo board configuration maps the amplifier control to GPP_A11 with the same 5 ms delay. Nissa baseboard GPIO initialization sets GPP_A11 (`EN_SPK_PA`) high. These upstream defaults corroborate the live ACPI mapping, but are not a readback of the current pin voltage.
+
+Linux's MAX98357A/MAX98360A codec driver acquires the optional GPIO initially low, raises it after the configured delay on playback start, and lowers it on stop/suspend/pause. The Windows prototype is missing that explicit lifecycle control.
+
+## What software can and cannot establish
+
+The MAX98360 datasheet describes pin-selected gain and automatic digital-interface configuration, without an I2C register interface for temperature or fault telemetry. EN low places the output in high impedance. With EN high, no toggling on the digital input pins permits automatic standby. Thus an asserted enable pin alone does not establish the heat cause: continuing clocks, malformed audio, gain, physical damage, and other electrical faults still need to be distinguished. The device includes a DC-blocking filter, so a claim that a PCM DC offset necessarily reaches the speaker is not supported. Chip thermal protection is not a speaker-temperature measurement.
+
+The next software correction is proper ownership of the ACPI-provided amplifier GPIO through Windows GPIO resources, with default-off behavior, controlled start timing, and shutdown on stop/failure/power transition. It must not use guessed raw pad-register writes. A build of that control path alone would not prove the reported thermal problem repaired. Keep powered speaker tests suspended until the electrical-output and thermal questions can be resolved.
+
+## Primary references
+
+- [MAX98360 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/MAX98360A-MAX98360D.pdf), especially enable/standby, input configuration, gain, and DC filter sections.
+- [Linux codec lifecycle](https://github.com/torvalds/linux/blob/master/sound/soc/codecs/max98357a.c).
+- [Coreboot Pujjo amplifier configuration](https://github.com/coreboot/coreboot/blob/master/src/mainboard/google/brya/variants/pujjo/overridetree.cb).
+- [Coreboot Nissa GPIO initialization](https://github.com/coreboot/coreboot/blob/master/src/mainboard/google/brya/variants/baseboard/nissa/gpio.c).

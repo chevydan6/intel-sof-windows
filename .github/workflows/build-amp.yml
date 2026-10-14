@@ -1,0 +1,45 @@
+name: Build amplifier shutdown-only driver
+
+on:
+  push:
+    paths:
+      - 'driver/amp/**'
+      - 'driver/acx/sofplay-startup.inc'
+      - 'tools/test-amp-hold.py'
+      - '.github/workflows/build-amp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/test-amp-hold.py
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+      - name: Build with Windows Driver Kit
+        shell: pwsh
+        run: msbuild driver/amp/sofamp.vcxproj /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
+      - name: Verify generated INF independently
+        shell: pwsh
+        run: |
+          $tool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Tools' -Recurse -Filter InfVerif.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Select-Object -Last 1
+          if (-not $tool) { throw 'x64 InfVerif.exe was not found in the WDK' }
+          Write-Host "Using $($tool.FullName)"
+          & $tool.FullName /w driver/amp/x64/Debug/sofamp.inf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sofamp-shutdown-package
+          path: driver/amp/x64/Debug/sofamp/
+          if-no-files-found: error

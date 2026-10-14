@@ -181,7 +181,7 @@ SofPlayRearmPcmLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
 }
 
 NTSTATUS
-SofPlayEvtD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousState)
+SofPlayStartPlaybackHardware(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousState)
 {
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     SOFPROBE_IPC3_SESSION_START_RESULT boot;
@@ -218,4 +218,26 @@ finish:
     SofPlaySaveStartupResult(Device, status);
     WdfWaitLockRelease(context->AcxPowerLock);
     return status;
+}
+
+NTSTATUS
+SofPlayEvtD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousState)
+{
+    // Thermal investigation hold. Do not boot DSP firmware or configure SSP
+    // merely to enumerate the ACPI amplifier child. There is no registry or
+    // IOCTL override: restoring playback requires an explicit source change
+    // after amplifier control and the thermal fault have been verified.
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    UNREFERENCED_PARAMETER(PreviousState);
+    WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+    WdfSpinLockAcquire(context->AcxBufferLock);
+    context->AcxHardwareReady = FALSE;
+    context->AcxRing = NULL;
+    WdfSpinLockRelease(context->AcxBufferLock);
+    ++context->AcxStartupCount;
+    context->AcxStartupStage = 7; // Thermal hold; playback deliberately unavailable.
+    SofPlaySaveStartupResult(Device, STATUS_DEVICE_NOT_READY);
+    WdfWaitLockRelease(context->AcxPowerLock);
+    // Permit PnP enumeration while all stream operations remain not ready.
+    return STATUS_SUCCESS;
 }

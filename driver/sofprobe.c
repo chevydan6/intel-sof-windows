@@ -3027,7 +3027,8 @@ SofProbeEvtIoDeviceControl(
             return;
         }
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
-        acx->Version = 6;
+        acx->Version = 7;
+        acx->ThermalHold = 1;
         acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
         acx->StartupCount = context->AcxStartupCount;
         acx->StartupStage = context->AcxStartupStage;

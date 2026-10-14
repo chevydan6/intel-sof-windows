@@ -138,7 +138,7 @@ if ($AcxRingOutput) {
         HardwarePosition=$values[4]; HardwareStatus=$values[5]; Output=$AcxRingOutput } | Format-List
     return
 }
-if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -in @(2,3,4,5,6))) { throw "Unsupported snapshot version: $($values[0])" }
+if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -in @(2,3,4,5,6,7))) { throw "Unsupported snapshot version: $($values[0])" }
 if ($AcxStatus) {
     [pscustomobject]@{
         StreamsCreated = $values[1]
@@ -163,6 +163,7 @@ if ($AcxStatus) {
         ContainerBits = if ($values[0] -ge 6) { $values[21] } else { $null }
         ValidBits = if ($values[0] -ge 6) { $values[22] } else { $null }
         SubFormat = if ($values[0] -ge 6) { $values[23] } else { $null }
+        ThermalHold = if ($values[0] -ge 7) { $values[24] } else { $null }
         SpeakerAttenuationDb = if ($values[0] -ge 5) { $values[19] / 100.0 } else { $null }
     } | Format-List
     return

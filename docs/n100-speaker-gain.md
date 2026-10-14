@@ -35,3 +35,12 @@ The package installed as `oem25.inf`, version `20.39.28.945`, signer `C2DF4A97C6
 The endpoint's software volume remained -12 dB / `0.4531023` after installation. With the driver's fixed attenuation, the combined attenuation is approximately 21 dB before accounting for app/session volume. Playback quality still needs the user's listening report. Package and recovery scripts are in `C:\Users\dan\sofplay-acx18-test`; rollback covers test certificates through ACX18. Older development packages remain available for recovery.
 
 Two successive WAVs in desktop session 1 (`05:41:19`–`05:41:33`, Windows local time) passed with the new driver. After the first, counters showed one run, 302 submitted packets, and 301 completion notifications. After the second, they showed two runs, 605 submitted packets, 603 completion notifications, and one PCM reset. Both reported zero late packets, zero starting position, no callback failures, hardware status `0x20`, and the 9 dB board attenuation. The playback script and scheduled task returned zero. This verifies repeated transport with the conversion enabled; it does not replace an audible distortion check.
+
+
+## Thermal stop — 2026-10-14
+
+Dan reports persistent fuzzy/buzzy playback at modest perceived loudness, suspects a damaged speaker, and reports that the speakers are really hot. Left/right isolation was requested, but no further playback test was performed after the heat report.
+
+Stopped Audiosrv and AudioEndpointBuilder and verified both Stopped. Disabled the N100 SOF development PCI device and verified DEVPKEY_Device_ProblemCode = 22 (disabled). No reboot was issued. Do not automatically restart audio, re-enable this device, or install a package that re-enables it as part of routine continuation. Investigate the thermal fault before further powered speaker testing; damage is not established and driver output remains a possible cause.
+
+A preceding three-second WASAPI software loopback recording captured stereo float32 at 48 kHz, with peaks approximately 0.524/0.529. That upstream capture does not establish safe downstream electrical output or physical speaker condition. The recording is local under ignored build/distortion and must not be committed. Diagnostic commit 07a1eda has not been installed on the target during this thermal stop.
