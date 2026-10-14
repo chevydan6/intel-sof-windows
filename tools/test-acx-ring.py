@@ -136,11 +136,28 @@ int main(void) {
     cursor(&c,1536); assert(SofProbeAcxAdvanceLocked(&c)==0);
     zero(ring,sizeof(ring));
     assert(c.AcxLinearPosition==99840);
+    // Intel HDA LPIB includes CBL itself: it is the wrap point, not corruption.
     cursor(&c,SOFPROBE_TONE_BYTES);
+    assert(SofProbeAcxAdvanceLocked(&c)==STATUS_SUCCESS);
+    assert(c.AcxLinearPosition==147456 && c.AcxLastPosition==0);
+    assert(c.AcxObservedPosition==49152 && c.AcxBoundaryReads==1);
+    assert(SofProbeAcxAdvanceLocked(&c)==STATUS_SUCCESS);
+    assert(c.AcxLinearPosition==147456); // Same boundary cannot add a revolution.
+    cursor(&c,0); assert(SofProbeAcxAdvanceLocked(&c)==STATUS_SUCCESS);
+    assert(c.AcxLinearPosition==147456);
+    // BCIS means successful buffer completion; FIFO/descriptor errors still fail.
+    cursor(&c,1536); registers[0x163]=0x24;
+    assert(SofProbeAcxAdvanceLocked(&c)==STATUS_SUCCESS);
+    assert(c.AcxLinearPosition==148992 && c.AcxCompletionReads==1);
+    cursor(&c,SOFPROBE_TONE_BYTES+8); registers[0x163]=0x20;
     assert(SofProbeAcxAdvanceLocked(&c)==STATUS_DEVICE_DATA_ERROR);
-    assert(c.AcxLinearPosition==99840);
-    cursor(&c,1536); registers[0x163]=0x10;
-    assert(SofProbeAcxAdvanceLocked(&c)==STATUS_DEVICE_DATA_ERROR);
+    assert(c.AcxLinearPosition==148992);
+    cursor(&c,1536);
+    for(ULONG error=8; error<=16; error+=8) {
+        registers[0x163]=(UCHAR)(0x24|error);
+        assert(SofProbeAcxAdvanceLocked(&c)==STATUS_DEVICE_DATA_ERROR);
+        assert(c.AcxLinearPosition==148992);
+    }
     c.AcxHardwareReady=0;
     assert(SofProbeAcxWritePacket(&c,packet,26,sizeof(packet),0,0)==STATUS_DEVICE_NOT_READY);
     assert(SofProbeAcxWritePacket(&c,packet,26,3,0,0)==STATUS_INVALID_PARAMETER);

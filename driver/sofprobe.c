@@ -277,9 +277,12 @@ SofProbeAcxAdvanceLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     Context->AcxObservedStatus = READ_REGISTER_UCHAR(Context->ToneHda + 0x163);
     if (position == SOFPROBE_TONE_BYTES) ++Context->AcxBoundaryReads;
     if (Context->AcxObservedStatus & 4) ++Context->AcxCompletionReads;
-    if (position >= SOFPROBE_TONE_BYTES ||
-        (Context->AcxObservedStatus & 0x1c) != 0)
+    // HDA 1.0a sections 3.3.36-37: LPIB includes CBL, and BCIS (bit 2)
+    // reports normal completion. Only FIFOE/DESE (bits 3/4) are errors.
+    if (position > SOFPROBE_TONE_BYTES ||
+        (Context->AcxObservedStatus & 0x18) != 0)
         return STATUS_DEVICE_DATA_ERROR;
+    if (position == SOFPROBE_TONE_BYTES) position = 0;
     advance = (position + SOFPROBE_TONE_BYTES - Context->AcxLastPosition) % SOFPROBE_TONE_BYTES;
     first = min(advance, SOFPROBE_TONE_BYTES - Context->AcxLastPosition);
     RtlZeroMemory(Context->AcxRing + Context->AcxLastPosition, first);

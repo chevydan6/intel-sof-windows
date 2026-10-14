@@ -134,10 +134,11 @@ The user subsequently confirmed that the powered melody sounded clear and both
 speaker areas remained cool. This permits the next controlled test; it does not
 resolve the intermittent monitoring error.
 
-`right-speaker-preview.ps1 -Diagnostics` reads a separate 48-byte diagnostic
+`right-speaker-preview.ps1 -Diagnostics` reads a separate 64-byte version-2 diagnostic
 IOCTL without changing the original status ABI or any playback limits. It saves
 the first stop reason, phase, elapsed time, callback gap, previous and observed
-DMA positions, transport flags and advance status. Later cleanup retains that
+DMA positions, transport flags, advance status, raw hardware position/status and
+boundary/completion read counts. Later cleanup retains that
 snapshot; a new device initialization clears it. The test worker saves this
 information even when the final preview status reports failure. Offline fault
 injection verifies reason selection and preservation through cleanup.
@@ -147,3 +148,23 @@ oem54.inf 11.0.0.373 and restarted both Windows audio services. The amplifier
 was verified off with no faults. That older headphone package does not contain
 the new packet-lifetime fix; the corrected headphone artifact passed CI but
 still needs its own hardware validation before replacing the known baseline.
+
+## Buffer-boundary correction
+
+The instrumented `9f201fe` build reproduced the error on its second dry run:
+AdvanceError in Active phase after 1138 ms, 36 checks, a 31 ms callback gap,
+and both transport flags set. This rules out startup/no-progress and the late
+callback check for that reproduction. The next diagnostic build, `14b655c`,
+adds the raw HDA register values without changing the rejection policy.
+
+Code review against Intel's [HDA 1.0a specification, sections 3.3.36–3.3.37](https://www.intel.com/content/dam/www/public/us/en/documents/product-specifications/high-definition-audio-specification.pdf)
+found two incorrect rejection conditions: LPIB may equal CBL at the wrap point,
+and the BCIS status bit reports buffer completion rather than a transfer error.
+The correction normalizes exactly CBL to ring offset zero and checks only the
+FIFO/descriptor error bits. Positions greater than CBL still fail. It does not
+change the amplifier lease, time limit, channel isolation or sample ceiling.
+
+The regression fails on the previous code and passes in both speaker and
+headphone builds with the correction. It checks CBL, repeated CBL/zero reads,
+continuing from the boundary, BCIS, out-of-range positions and both actual error
+bits. Offline success does not by itself prove the cause of the hardware error.
