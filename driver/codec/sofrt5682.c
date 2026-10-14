@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// RT5682 bring-up through ACPI I2C: identify, calibrate, then remain muted.
-// No stream, audio clocks, user register access, or speaker GPIO operation.
+// RT5682 headphone codec: muted enumeration, stream-owned output and jack monitoring.
+// No arbitrary register access or speaker GPIO operation.
 #include <ntddk.h>
 #include <wdf.h>
 #include <spb.h>
@@ -17,6 +17,8 @@ EVT_WDF_DEVICE_RELEASE_HARDWARE CodecRelease;
 EVT_WDF_DEVICE_D0_ENTRY CodecEnter;
 EVT_WDF_DEVICE_D0_EXIT CodecExit;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL CodecControl;
+EVT_WDF_TIMER CodecJackTimer;
+EVT_WDF_FILE_CLEANUP CodecFileCleanup;
 
 typedef struct _CODEC_CONTEXT {
     LARGE_INTEGER Connection;
@@ -28,6 +30,11 @@ typedef struct _CODEC_CONTEXT {
     BOOLEAN Prepared;
     NTSTATUS LastStatus;
     ULONG HpMute, DacControl, DigitalPower;
+    WDFWAITLOCK CodecLock;
+    WDFTIMER JackTimer;
+    WDFFILEOBJECT StreamOwner;
+    BOOLEAN StreamRequested, Playing, JackPresent;
+    ULONG JackPolls;
     ULONG AuditionStage;
     NTSTATUS AuditionStatus;
 } CODEC_CONTEXT;
@@ -39,9 +46,9 @@ static VOID Report(WDFDEVICE device, ULONG stage, NTSTATUS status)
     CODEC_CONTEXT *c = CodecContext(device);
     const PCWSTR names[] = { L"CodecStage", L"CodecStatus", L"CodecDeviceId",
         L"CodecVendorId", L"CodecVersionId", L"CodecReads", L"CodecInitialized",
-        L"CodecHpMute", L"CodecDacControl", L"CodecDigitalPower", L"CodecAuditionStage", L"CodecAuditionStatus" };
+        L"CodecHpMute", L"CodecDacControl", L"CodecDigitalPower", L"CodecAuditionStage", L"CodecAuditionStatus", L"CodecStreamRequested", L"CodecPlaying", L"CodecJackPresent", L"CodecJackPolls" };
     ULONG values[] = { stage, (ULONG)status, c->DeviceId, c->VendorId, c->VersionId, c->Reads,
-        c->Initialized, c->HpMute, c->DacControl, c->DigitalPower, c->AuditionStage, (ULONG)c->AuditionStatus };
+        c->Initialized, c->HpMute, c->DacControl, c->DigitalPower, c->AuditionStage, (ULONG)c->AuditionStatus, c->StreamRequested, c->Playing, c->JackPresent, c->JackPolls };
     ULONG i;
     if (NT_SUCCESS(WdfDeviceOpenRegistryKey(device, PLUGPLAY_REGKEY_DEVICE,
             KEY_SET_VALUE, WDF_NO_OBJECT_ATTRIBUTES, &key))) {
@@ -128,6 +135,35 @@ static NTSTATUS WriteRegister(WDFDEVICE device, USHORT reg, USHORT value)
 #include "rt5682-init.h"
 #include "rt5682-playback.h"
 #include "rt5682-audition.h"
+#include "rt5682-stream.h"
+
+VOID CodecJackTimer(WDFTIMER timer)
+{
+    WDFDEVICE device = (WDFDEVICE)WdfTimerGetParentObject(timer);
+    CODEC_CONTEXT *c = CodecContext(device);
+    WdfWaitLockAcquire(c->CodecLock, NULL);
+    if (c->StreamRequested && c->I2c != NULL && c->Identified) {
+        BOOLEAN wasPlaying = c->Playing;
+        ++c->JackPolls;
+        c->LastStatus = CodecPollJack(device);
+        if (wasPlaying != c->Playing || !NT_SUCCESS(c->LastStatus))
+            Report(device, c->Playing ? 8 : 7, c->LastStatus);
+        if (c->StreamRequested) WdfTimerStart(timer, WDF_REL_TIMEOUT_IN_MS(100));
+    }
+    WdfWaitLockRelease(c->CodecLock);
+}
+
+VOID CodecFileCleanup(WDFFILEOBJECT file)
+{
+    WDFDEVICE device = WdfFileObjectGetDevice(file);
+    CODEC_CONTEXT *c = CodecContext(device);
+    WdfWaitLockAcquire(c->CodecLock, NULL);
+    if (c->StreamOwner == file) {
+        c->LastStatus = CodecStreamOff(device);
+        Report(device, 5, c->LastStatus);
+    }
+    WdfWaitLockRelease(c->CodecLock);
+}
 
 static NTSTATUS ValidateAndSaveCrs(WDFDEVICE device)
 {
@@ -181,6 +217,8 @@ NTSTATUS CodecAdd(WDFDRIVER driver, PWDFDEVICE_INIT init)
     WDF_OBJECT_ATTRIBUTES attributes;
     WDFDEVICE device;
     WDF_IO_QUEUE_CONFIG queue;
+    WDF_TIMER_CONFIG timer;
+    WDF_FILEOBJECT_CONFIG file;
     NTSTATUS status;
     UNREFERENCED_PARAMETER(driver);
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&callbacks);
@@ -189,9 +227,23 @@ NTSTATUS CodecAdd(WDFDRIVER driver, PWDFDEVICE_INIT init)
     callbacks.EvtDeviceD0Entry = CodecEnter;
     callbacks.EvtDeviceD0Exit = CodecExit;
     WdfDeviceInitSetPnpPowerEventCallbacks(init, &callbacks);
+    WDF_FILEOBJECT_CONFIG_INIT(&file, WDF_NO_EVENT_CALLBACK, WDF_NO_EVENT_CALLBACK, CodecFileCleanup);
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
+    attributes.SynchronizationScope = WdfSynchronizationScopeNone;
+    WdfDeviceInitSetFileObjectConfig(init, &file, &attributes);
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, CODEC_CONTEXT);
     attributes.ExecutionLevel = WdfExecutionLevelPassive;
     status = WdfDeviceCreate(&init, &attributes, &device);
+    if (!NT_SUCCESS(status)) return status;
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = device;
+    status = WdfWaitLockCreate(&attributes, &CodecContext(device)->CodecLock);
+    if (!NT_SUCCESS(status)) return status;
+    WDF_TIMER_CONFIG_INIT(&timer, CodecJackTimer);
+    timer.AutomaticSerialization = FALSE;
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
+    status = WdfTimerCreate(&timer, &attributes, &CodecContext(device)->JackTimer);
     if (!NT_SUCCESS(status)) return status;
     status = WdfDeviceCreateDeviceInterface(device, &CodecInterfaceGuid, NULL);
     if (!NT_SUCCESS(status)) return status;
@@ -299,8 +351,15 @@ NTSTATUS CodecExit(WDFDEVICE device, WDF_POWER_DEVICE_STATE target)
     CODEC_CONTEXT *c = CodecContext(device);
     NTSTATUS status = STATUS_SUCCESS;
     UNREFERENCED_PARAMETER(target);
+    // Do not wait for a timer while holding the lock its callback acquires.
+    WdfWaitLockAcquire(c->CodecLock, NULL);
+    c->StreamRequested = FALSE;
+    c->StreamOwner = NULL;
+    WdfWaitLockRelease(c->CodecLock);
+    WdfTimerStop(c->JackTimer, TRUE);
+    WdfWaitLockAcquire(c->CodecLock, NULL);
     if (c->I2c != NULL) {
-        if (c->Identified) status = CodecResetMuted(device);
+        if (c->Identified) status = CodecStreamOff(device);
         c->Initialized = FALSE;
         c->Prepared = FALSE;
         Report(device, 6, status);
@@ -309,6 +368,7 @@ NTSTATUS CodecExit(WDFDEVICE device, WDF_POWER_DEVICE_STATE target)
         c->I2c = NULL;
     }
     c->Identified = FALSE;
+    WdfWaitLockRelease(c->CodecLock);
     return status;
 }
 
@@ -318,27 +378,35 @@ VOID CodecControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
     WDFDEVICE device = WdfIoQueueGetDevice(queue);
     CODEC_CONTEXT *c = CodecContext(device);
     CODEC_STATUS *result;
+    WDFFILEOBJECT file = WdfRequestGetFileObject(request);
     NTSTATUS status;
     if (inputBytes != 0 || outputBytes < sizeof(*result) ||
-        (code != IOCTL_CODEC_QUERY && code != IOCTL_CODEC_PREPARE && code != IOCTL_CODEC_STOP && code != IOCTL_CODEC_AUDITION)) {
-        WdfRequestComplete(request, STATUS_INVALID_PARAMETER);
-        return;
+        (code != IOCTL_CODEC_QUERY && code != IOCTL_CODEC_PREPARE &&
+         code != IOCTL_CODEC_STOP && code != IOCTL_CODEC_AUDITION && code != IOCTL_CODEC_STREAM_START)) {
+        WdfRequestComplete(request, STATUS_INVALID_PARAMETER); return;
     }
     status = WdfRequestRetrieveOutputBuffer(request, sizeof(*result), (PVOID *)&result, NULL);
     if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
-    if (!c->Identified || c->I2c == NULL) { WdfRequestComplete(request, STATUS_DEVICE_NOT_READY); return; }
-    if (code == IOCTL_CODEC_AUDITION) {
-        if (!c->Prepared || !c->Initialized) {
-            WdfRequestComplete(request, STATUS_DEVICE_NOT_READY);
-            return;
+    WdfWaitLockAcquire(c->CodecLock, NULL);
+    if (!c->Identified || c->I2c == NULL) { status = STATUS_DEVICE_NOT_READY; goto done; }
+    if (code == IOCTL_CODEC_STREAM_START) {
+        if (file == NULL) { status = STATUS_INVALID_PARAMETER; goto done; }
+        if (c->StreamRequested && c->StreamOwner != file) { status = STATUS_DEVICE_BUSY; goto done; }
+        status = STATUS_SUCCESS;
+        if (!c->StreamRequested) {
+            c->StreamRequested = TRUE; c->StreamOwner = file;
+            status = CodecStreamOn(device);
+            if (NT_SUCCESS(status)) WdfTimerStart(c->JackTimer, WDF_REL_TIMEOUT_IN_MS(100));
         }
+    } else if (code == IOCTL_CODEC_AUDITION) {
+        if (c->StreamRequested || !c->Prepared || !c->Initialized) { status = STATUS_DEVICE_NOT_READY; goto done; }
         status = CodecAudition(device, &c->AuditionStage);
         c->AuditionStatus = status;
         c->Initialized = c->Prepared = FALSE;
     } else if (code == IOCTL_CODEC_STOP) {
-        status = CodecResetMuted(device);
-        c->Initialized = c->Prepared = FALSE;
+        status = CodecStreamOff(device);
     } else if (code == IOCTL_CODEC_PREPARE) {
+        if (c->StreamRequested) { status = STATUS_DEVICE_BUSY; goto done; }
         status = STATUS_SUCCESS;
         if (!c->Initialized) {
             status = CodecInitializeMuted(device);
@@ -349,23 +417,22 @@ VOID CodecControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
             c->Prepared = NT_SUCCESS(status);
             if (!NT_SUCCESS(status)) c->Initialized = FALSE;
         }
-    } else status = STATUS_SUCCESS;
+    } else status = c->LastStatus; // A timer failure remains observable until restart/stop.
     if (NT_SUCCESS(status)) status = ReadRegister(device, RT5682_HP_CTRL_1, &c->HpMute);
     if (NT_SUCCESS(status)) status = ReadRegister(device, RT5682_HP_CTRL_2, &c->DacControl);
     if (NT_SUCCESS(status)) status = ReadRegister(device, RT5682_PWR_DIG_1, &c->DigitalPower);
-    if (!NT_SUCCESS(status)) {
-        (VOID)CodecResetMuted(device);
-        c->Initialized = c->Prepared = FALSE;
-    }
+    if (!NT_SUCCESS(status)) (VOID)CodecStreamOff(device);
     c->LastStatus = status;
-    Report(device, c->Prepared ? 7 : 5, status);
-    if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
+    Report(device, c->Playing ? 8 : c->Prepared ? 7 : 5, status);
+    if (!NT_SUCCESS(status)) goto done;
     RtlZeroMemory(result, sizeof(*result));
     result->Version = 1; result->DeviceId = c->DeviceId; result->VendorId = c->VendorId;
     result->Initialized = c->Initialized; result->Prepared = c->Prepared;
     result->HpMute = c->HpMute; result->DacControl = c->DacControl;
     result->DigitalPower = c->DigitalPower; result->LastStatus = (ULONG)c->LastStatus;
-    WdfRequestCompleteWithInformation(request, status, sizeof(*result));
+done:
+    WdfWaitLockRelease(c->CodecLock);
+    WdfRequestCompleteWithInformation(request, status, NT_SUCCESS(status) ? sizeof(*result) : 0);
 }
 
 NTSTATUS CodecRelease(WDFDEVICE device, WDFCMRESLIST resources)

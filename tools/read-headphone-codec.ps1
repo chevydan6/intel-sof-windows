@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Fixed operations only. Audition enables quiet headphones for at most three
 # seconds of programmed dwell, then mutes and powers down before returning.
-param([switch]$Stop, [switch]$Audition)
+param([switch]$Stop, [switch]$Audition, [switch]$AllowPlaying)
 $ErrorActionPreference = 'Stop'
 if ($Stop -and $Audition) { throw 'Select at most one operation' }
 if (!('HeadphoneCodecClient' -as [type])) {
@@ -50,6 +50,6 @@ if ($paths.Count -ne 1) { throw 'Expected exactly one headphone codec interface'
 $code = if ($Audition) { [uint32]0x22A40C } elseif ($Stop) { [uint32]0x22A408 } else { [uint32]0x226400 }
 $v = [HeadphoneCodecClient]::Exchange($paths[0],$code)
 if ($v[0] -ne 1 -or $v[1] -ne 0x6530 -or $v[2] -ne 0x10ec -or $v[8] -ne 0) { throw 'Codec identity/status check failed' }
-if (($v[5] -band 0x8080) -ne 0x8080 -or ($v[6] -band 0xe000) -ne 0x8000) { throw 'Headphone mutes not asserted' }
+if (!$AllowPlaying -and (($v[5] -band 0x8080) -ne 0x8080 -or ($v[6] -band 0xe000) -ne 0x8000)) { throw 'Headphone mutes not asserted' }
 if (($Stop -or $Audition) -and ($v[3] -ne 0 -or $v[4] -ne 0 -or $v[7] -ne 0)) { throw 'Codec shutdown not verified' }
 [pscustomobject]@{Version=$v[0];DeviceId=('0x{0:X4}' -f $v[1]);VendorId=('0x{0:X4}' -f $v[2]);Initialized=$v[3];Prepared=$v[4];HpMute=('0x{0:X4}' -f $v[5]);DacControl=('0x{0:X4}' -f $v[6]);DigitalPower=('0x{0:X4}' -f $v[7]);LastStatus=('0x{0:X8}' -f $v[8])}

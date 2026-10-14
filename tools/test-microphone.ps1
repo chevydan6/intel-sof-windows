@@ -56,7 +56,7 @@ try {
  } elseif(@(Get-Service Audiosrv,AudioEndpointBuilder | Where-Object Status -ne Stopped).Count){throw 'Stop audio services before ambient capture'}
  $amp=Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\MX98360A\0\Device Parameters'
  if($amp.SofAmpStage -ne 3 -or $amp.SofAmpStatus -ne 0 -or $amp.SofAmpOffWrites -lt 1){throw 'Amplifier hold not verified'}
- & (Join-Path $PSScriptRoot 'read-headphone-codec.ps1') | Out-Host
+ & (Join-Path $PSScriptRoot 'read-headphone-codec.ps1') -AllowPlaying:$DuringAudition | Out-Host
  if($DuringAudition){[IO.File]::WriteAllText($ReadyFile,'ready')}
  $bytes=[SofMicClient]::Capture($paths[0])
  $w=New-Object uint32[] 16

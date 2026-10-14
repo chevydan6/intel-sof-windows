@@ -406,6 +406,15 @@ SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
         !context->TonePcmConfigured || context->ToneDmaRunning ||
         context->ToneTriggerActive || context->ToneHda == NULL)
         return STATUS_DEVICE_NOT_READY;
+#ifdef SOFPLAY_HEADPHONE
+    // Complete depop/jack checks before starting DMA, so setup delays cannot
+    // consume an unserviced playback ring before the ACX packet timer starts.
+    status = HeadphoneCodecCommand(context->HeadphoneCodec, IOCTL_CODEC_STREAM_START);
+    if (!NT_SUCCESS(status)) {
+        (VOID)HeadphoneCodecCommand(context->HeadphoneCodec, IOCTL_CODEC_STOP);
+        return status;
+    }
+#endif
     context->AcxStartPosition = READ_REGISTER_ULONG((PULONG)(context->ToneHda + 0x164));
     context->AcxPcmNeedsReset = TRUE;
     WRITE_REGISTER_UCHAR(context->ToneHda + 0x163, 0x1c);
@@ -416,7 +425,12 @@ SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
             break;
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
     }
-    if (i == 50) return STATUS_IO_TIMEOUT;
+    if (i == 50) {
+#ifdef SOFPLAY_HEADPHONE
+        (VOID)HeadphoneCodecCommand(context->HeadphoneCodec, IOCTL_CODEC_STOP);
+#endif
+        return STATUS_IO_TIMEOUT;
+    }
     context->ToneDmaRunning = TRUE;
     status = SofProbeAcxTrigger(context, 0x60040000);
     if (NT_SUCCESS(status)) {
@@ -424,6 +438,9 @@ SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
     } else {
         WRITE_REGISTER_UCHAR(context->ToneHda + 0x160, 0);
         context->ToneDmaRunning = FALSE;
+#ifdef SOFPLAY_HEADPHONE
+        (VOID)HeadphoneCodecCommand(context->HeadphoneCodec, IOCTL_CODEC_STOP);
+#endif
     }
     return status;
 }
@@ -435,6 +452,10 @@ SofProbeAcxPauseLocked(_In_ WDFDEVICE Device)
     ULONG i;
     LARGE_INTEGER delay;
     NTSTATUS status = STATUS_SUCCESS;
+#ifdef SOFPLAY_HEADPHONE
+    NTSTATUS codecStatus = context->HeadphoneCodec != NULL ?
+        HeadphoneCodecCommand(context->HeadphoneCodec, IOCTL_CODEC_STOP) : STATUS_SUCCESS;
+#endif
     if (!context->TonePrepared || context->ToneHda == NULL)
         return STATUS_DEVICE_NOT_READY;
     if (context->ToneTriggerActive) {
@@ -451,6 +472,9 @@ SofProbeAcxPauseLocked(_In_ WDFDEVICE Device)
     if (i == 300) return STATUS_IO_TIMEOUT;
     context->ToneDmaRunning = FALSE;
     WRITE_REGISTER_UCHAR(context->ToneHda + 0x163, 0x1c);
+#ifdef SOFPLAY_HEADPHONE
+    if (NT_SUCCESS(status)) status = codecStatus;
+#endif
     return status;
 }
 NTSTATUS

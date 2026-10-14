@@ -5,13 +5,36 @@
  * No register, gain, duration or output-selection input is accepted.
  */
 #pragma once
-static NTSTATUS CodecAudition(WDFDEVICE device, ULONG *stage)
+static NTSTATUS CodecConfigureJack(WDFDEVICE device)
+{
+    NTSTATUS status;
+#define UPDATE(reg, mask, val) do { status = CodecUpdate(device, reg, mask, val); if (!NT_SUCCESS(status)) return status; } while (0)
+    // Configure JD1, but do not enable GPIO or button interrupts: jack
+    // monitoring uses the serialized passive-level timer.
+    UPDATE(RT5682_CBJ_CTRL_5, 0x0700, 0x0600);
+    UPDATE(RT5682_CBJ_CTRL_2, RT5682_EXT_JD_SRC, RT5682_EXT_JD_SRC_MANUAL);
+    status = WriteRegister(device, RT5682_CBJ_CTRL_1, 0xd142);
+    if (!NT_SUCCESS(status)) return status;
+    UPDATE(RT5682_CBJ_CTRL_3, RT5682_CBJ_IN_BUF_EN, RT5682_CBJ_IN_BUF_EN);
+    UPDATE(RT5682_SAR_IL_CMD_1, RT5682_SAR_POW_MASK, RT5682_SAR_POW_EN);
+    UPDATE(RT5682_RC_CLK_CTRL, RT5682_POW_IRQ | RT5682_POW_JDH | RT5682_POW_ANA,
+        RT5682_POW_IRQ | RT5682_POW_JDH | RT5682_POW_ANA);
+    UPDATE(RT5682_PWR_ANLG_2, RT5682_PWR_JDH, RT5682_PWR_JDH);
+    UPDATE(RT5682_IRQ_CTRL_2, RT5682_JD1_EN_MASK | RT5682_JD1_POL_MASK,
+        RT5682_JD1_EN | RT5682_JD1_POL_NOR);
+    // Leave GP1 unmapped to IRQ and allow the Linux jack debounce interval.
+    return STATUS_SUCCESS;
+#undef UPDATE
+}
+
+static NTSTATUS CodecEnableHeadphones(WDFDEVICE device, ULONG *stage, USHORT gain)
 {
     ULONG value, count;
     NTSTATUS status, stopped;
 #define UPDATE(reg, mask, val) do { status = CodecUpdate(device, reg, mask, val); if (!NT_SUCCESS(status)) goto finish; } while (0)
 #define READ(reg) do { status = ReadRegister(device, reg, &value); if (!NT_SUCCESS(status)) goto finish; } while (0)
     *stage = 1;
+    if (gain != 0x4646 && gain != 0xaeae) return STATUS_INVALID_PARAMETER;
     READ(RT5682_HP_CTRL_1);
     if ((value & 0x8080) != 0x8080) { status = STATUS_DEVICE_DATA_ERROR; goto finish; }
     READ(RT5682_HP_CTRL_2);
@@ -22,21 +45,9 @@ static NTSTATUS CodecAudition(WDFDEVICE device, ULONG *stage)
     UPDATE(RT5682_BIAS_CUR_CTRL_8, RT5682_HPA_CP_BIAS_CTRL_MASK, RT5682_HPA_CP_BIAS_3UA);
     UPDATE(RT5682_CHARGE_PUMP_1, RT5682_CP_CLK_HP_MASK, RT5682_CP_CLK_HP_300KHZ);
     UPDATE(RT5682_HP_CHARGE_PUMP_1, RT5682_PM_HP_MASK, RT5682_PM_HP_HV);
-    // Configure JD1, but do not enable GPIO or button interrupts: this bounded
-    // diagnostic polls jack presence while normal hotplug support is pending.
     *stage = 2;
-    UPDATE(RT5682_CBJ_CTRL_5, 0x0700, 0x0600);
-    UPDATE(RT5682_CBJ_CTRL_2, RT5682_EXT_JD_SRC, RT5682_EXT_JD_SRC_MANUAL);
-    status = WriteRegister(device, RT5682_CBJ_CTRL_1, 0xd142);
+    status = CodecConfigureJack(device);
     if (!NT_SUCCESS(status)) goto finish;
-    UPDATE(RT5682_CBJ_CTRL_3, RT5682_CBJ_IN_BUF_EN, RT5682_CBJ_IN_BUF_EN);
-    UPDATE(RT5682_SAR_IL_CMD_1, RT5682_SAR_POW_MASK, RT5682_SAR_POW_EN);
-    UPDATE(RT5682_RC_CLK_CTRL, RT5682_POW_IRQ | RT5682_POW_JDH | RT5682_POW_ANA,
-        RT5682_POW_IRQ | RT5682_POW_JDH | RT5682_POW_ANA);
-    UPDATE(RT5682_PWR_ANLG_2, RT5682_PWR_JDH, RT5682_PWR_JDH);
-    UPDATE(RT5682_IRQ_CTRL_2, RT5682_JD1_EN_MASK | RT5682_JD1_POL_MASK,
-        RT5682_JD1_EN | RT5682_JD1_POL_NOR);
-    // Leave GP1 unmapped to IRQ and allow the Linux jack debounce interval.
     CodecDelay(250);
     READ(RT5682_AJD1_CTRL);
     if (value & RT5682_JDH_RS_MASK) { status = STATUS_DEVICE_NOT_READY; goto finish; }
@@ -82,24 +93,42 @@ static NTSTATUS CodecAudition(WDFDEVICE device, ULONG *stage)
     if (value & RT5682_JDH_RS_MASK) { status = STATUS_DEVICE_NOT_READY; goto finish; }
     READ(RT5682_DAC1_DIG_VOL);
     if (value != 0x4646) { status = STATUS_DEVICE_DATA_ERROR; goto finish; }
+    // Linux DAC TLV: 0xae = 87 steps at 0.75 dB above -65.25 dB: unity.
+    // The transport still applies a fixed -24.08 dB ceiling before the codec.
+    status = WriteRegister(device, RT5682_DAC1_DIG_VOL, gain);
+    if (!NT_SUCCESS(status)) goto finish;
+    READ(RT5682_DAC1_DIG_VOL);
+    if (value != gain) { status = STATUS_DEVICE_DATA_ERROR; goto finish; }
     *stage = 5;
     UPDATE(RT5682_HP_CTRL_1, 0x8080, 0);
     UPDATE(RT5682_HP_CTRL_2, RT5682_HP_C2_DAC_AMP_MUTE, 0);
     READ(RT5682_HP_CTRL_2);
     if ((value & 0xe000) != 0x6000) { status = STATUS_DEVICE_DATA_ERROR; goto finish; }
     *stage = 6;
-    for (count = 0; count < 30; ++count) {
-        CodecDelay(100);
-        READ(RT5682_AJD1_CTRL);
-        if (value & RT5682_JDH_RS_MASK) { status = STATUS_DEVICE_NOT_READY; goto finish; }
-    }
-    status = STATUS_SUCCESS;
+    return STATUS_SUCCESS; // Stream lifecycle or bounded audition owns shutdown.
 finish:
     // Always mute and power down before returning, even after a failed I2C op.
     stopped = CodecResetMuted(device);
     if (NT_SUCCESS(status)) status = stopped;
-    if (NT_SUCCESS(status)) *stage = 7;
     return status;
 #undef READ
 #undef UPDATE
+}
+
+static NTSTATUS CodecAudition(WDFDEVICE device, ULONG *stage)
+{
+    ULONG value, count;
+    NTSTATUS status = CodecEnableHeadphones(device, stage, 0x4646), stopped;
+    if (NT_SUCCESS(status)) {
+        for (count = 0; count < 30; ++count) {
+            CodecDelay(100);
+            status = ReadRegister(device, RT5682_AJD1_CTRL, &value);
+            if (!NT_SUCCESS(status)) break;
+            if (value & RT5682_JDH_RS_MASK) { status = STATUS_DEVICE_NOT_READY; break; }
+        }
+    }
+    stopped = CodecResetMuted(device);
+    if (NT_SUCCESS(status)) status = stopped;
+    if (NT_SUCCESS(status)) *stage = 7;
+    return status;
 }

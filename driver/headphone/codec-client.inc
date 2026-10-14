@@ -16,8 +16,18 @@ static NTSTATUS HeadphoneCodecCommand(WDFIOTARGET target, ULONG code)
         NULL, &out, &options, &returned);
     if (!NT_SUCCESS(status)) return status;
     if (returned != sizeof(result) || result.Version != 1 || result.DeviceId != 0x6530 ||
-        result.VendorId != 0x10ec || result.LastStatus != 0 ||
-        (result.HpMute & 0x8080) != 0x8080 || (result.DacControl & 0xe000) != 0x8000)
+        result.VendorId != 0x10ec || result.LastStatus != 0)
+        return STATUS_DEVICE_DATA_ERROR;
+    if (code == IOCTL_CODEC_STREAM_START) {
+        BOOLEAN active = (result.HpMute & 0x8080) == 0 &&
+                         (result.DacControl & 0xe000) == 0x6000;
+        BOOLEAN waiting = (result.HpMute & 0x8080) == 0x8080 &&
+                          (result.DacControl & 0xe000) == 0x8000;
+        if (!active && !waiting) return STATUS_DEVICE_DATA_ERROR;
+        if (active && (!result.Initialized || !result.Prepared)) return STATUS_DEVICE_DATA_ERROR;
+    } else if ((result.HpMute & 0x8080) != 0x8080 ||
+               (result.DacControl & 0xe000) != 0x8000) return STATUS_DEVICE_DATA_ERROR;
+    if (code == IOCTL_CODEC_STOP && (result.Initialized || result.Prepared || result.DigitalPower))
         return STATUS_DEVICE_DATA_ERROR;
     if (code == IOCTL_CODEC_PREPARE && (!result.Initialized || !result.Prepared))
         return STATUS_DEVICE_NOT_READY;
