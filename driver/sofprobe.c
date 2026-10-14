@@ -59,6 +59,8 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     WDFWAITLOCK AcxPowerLock;
 #ifdef SOFPLAY_HEADPHONE
     WDFIOTARGET HeadphoneCodec;
+    BOOLEAN MicAttempted;
+    WDFCOMMONBUFFER MicRetainedBdl, MicRetainedAudio, MicRetainedTable;
 #endif
     WDFSPINLOCK AcxBufferLock;
     BOOLEAN AcxHardwareReady;
@@ -2676,6 +2678,67 @@ SofProbeAllowedIpc3Command(_In_ ULONG Command)
     }
 }
 
+// Caller owns the power/IPC lock; words come from a validated request or
+// the fixed internal microphone recipe. This is not a user IOCTL entry point.
+static NTSTATUS
+SofProbeExchangeMessage(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
+                        _In_reads_bytes_(size) const ULONG *words,
+                        _In_ ULONG size,
+                        _Out_ PSOFPROBE_IPC3_SESSION_MEMORY_RESULT result)
+{
+    ULONG i;
+    PUCHAR dsp;
+    PULONG hipcidr, hipcida;
+    LARGE_INTEGER delay;
+    if (!Context->SessionActive || Context->SessionDsp == NULL)
+        return STATUS_DEVICE_NOT_READY;
+    if (size < 8 || size > 384 || (size & 3) != 0 || words[0] != size)
+        return STATUS_INVALID_PARAMETER;
+    RtlZeroMemory(result, sizeof(*result));
+    result->Version = 1;
+    dsp = Context->SessionDsp;
+    hipcidr = (PULONG)(dsp + 0xd0);
+    hipcida = (PULONG)(dsp + 0xd4);
+    if (READ_REGISTER_ULONG(hipcidr) != 0 ||
+        READ_REGISTER_ULONG(hipcida) != 0 ||
+        (READ_REGISTER_ULONG((PULONG)(dsp + 0x04)) & 0x01010101) !=
+            0x01010000) {
+        result->Result = 1;
+        goto finish;
+    }
+    for (i = 0; i < size / sizeof(ULONG); ++i)
+        WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)),
+                             words[i]);
+    KeMemoryBarrier();
+    WRITE_REGISTER_ULONG(hipcidr, 0x80000000);
+    delay.QuadPart = -10000;
+    for (i = 0; i < 500; ++i) {
+        if (READ_REGISTER_ULONG(hipcida) & 0x80000000) break;
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    result->ReplyPolls = i;
+    result->ReplyDoorbell = READ_REGISTER_ULONG(hipcida);
+    if (i == 500) {
+        result->Result = 2;
+        goto finish;
+    }
+    result->ReplySize = READ_REGISTER_ULONG((PULONG)(dsp + 0xa0000));
+    result->ReplyCommand = READ_REGISTER_ULONG((PULONG)(dsp + 0xa0004));
+    result->ReplyError = (LONG)READ_REGISTER_ULONG((PULONG)(dsp + 0xa0008));
+    if (result->ReplySize < 12 || result->ReplySize >
+            sizeof(result->ReplyWords) || (result->ReplySize & 3) != 0) {
+        result->Result = 3;
+    } else {
+        for (i = 0; i < result->ReplySize / sizeof(ULONG); ++i)
+            result->ReplyWords[i] = READ_REGISTER_ULONG(
+                (PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)));
+
+    }
+    WRITE_REGISTER_ULONG(hipcida, 0x80000000);
+finish:
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS
 SofProbeExchangeHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
                          _In_ PSOFPROBE_IPC3_EXCHANGE_REQUEST input,
@@ -2684,11 +2747,7 @@ SofProbeExchangeHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
 {
     ULONG words[96];
     ULONG size;
-    ULONG i;
-    PUCHAR dsp;
-    PULONG hipcidr;
-    PULONG hipcida;
-    LARGE_INTEGER delay;
+    NTSTATUS status;
 
     if (InputBufferLength < FIELD_OFFSET(SOFPROBE_IPC3_EXCHANGE_REQUEST,
                                          RequestWords) + 8 ||
@@ -2743,44 +2802,8 @@ SofProbeExchangeHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
             return STATUS_INVALID_DEVICE_STATE;
         }
     }
-    RtlZeroMemory(result, sizeof(*result));
-    result->Version = 1;
-    dsp = Context->SessionDsp;
-    hipcidr = (PULONG)(dsp + 0xd0);
-    hipcida = (PULONG)(dsp + 0xd4);
-    if (READ_REGISTER_ULONG(hipcidr) != 0 ||
-        READ_REGISTER_ULONG(hipcida) != 0 ||
-        (READ_REGISTER_ULONG((PULONG)(dsp + 0x04)) & 0x01010101) !=
-            0x01010000) {
-        result->Result = 1;
-        goto finish;
-    }
-    for (i = 0; i < size / sizeof(ULONG); ++i)
-        WRITE_REGISTER_ULONG((PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)),
-                             words[i]);
-    KeMemoryBarrier();
-    WRITE_REGISTER_ULONG(hipcidr, 0x80000000);
-    delay.QuadPart = -10000;
-    for (i = 0; i < 500; ++i) {
-        if (READ_REGISTER_ULONG(hipcida) & 0x80000000) break;
-        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
-    }
-    result->ReplyPolls = i;
-    result->ReplyDoorbell = READ_REGISTER_ULONG(hipcida);
-    if (i == 500) {
-        result->Result = 2;
-        goto finish;
-    }
-    result->ReplySize = READ_REGISTER_ULONG((PULONG)(dsp + 0xa0000));
-    result->ReplyCommand = READ_REGISTER_ULONG((PULONG)(dsp + 0xa0004));
-    result->ReplyError = (LONG)READ_REGISTER_ULONG((PULONG)(dsp + 0xa0008));
-    if (result->ReplySize < 12 || result->ReplySize >
-            sizeof(result->ReplyWords) || (result->ReplySize & 3) != 0) {
-        result->Result = 3;
-    } else {
-        for (i = 0; i < result->ReplySize / sizeof(ULONG); ++i)
-            result->ReplyWords[i] = READ_REGISTER_ULONG(
-                (PULONG)(dsp + 0xa0000 + i * sizeof(ULONG)));
+    status = SofProbeExchangeMessage(Context, words, size, result);
+    if (NT_SUCCESS(status) && result->Result == 0) {
         if (result->ReplyError == 0) {
             if (words[1] == 0x60010000)
                 Context->TonePcmConfigured = TRUE;
@@ -2792,9 +2815,7 @@ SofProbeExchangeHardware(_In_ PSOFPROBE_DEVICE_CONTEXT Context,
                 Context->TonePcmConfigured = FALSE;
         }
     }
-    WRITE_REGISTER_ULONG(hipcida, 0x80000000);
-finish:
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static VOID
@@ -2824,6 +2845,9 @@ SofProbeSessionExchange(_In_ WDFREQUEST Request,
 
 #ifdef SOFPLAY_INTEGRATED
 #include "acx/sofplay-startup.inc"
+#ifdef SOFPLAY_HEADPHONE
+#include "headphone/microphone.inc"
+#endif
 #endif
 
 NTSTATUS
@@ -2941,6 +2965,13 @@ SofProbeEvtIoDeviceControl(
     PUCHAR dsp = NULL;
     NTSTATUS status;
 
+#ifdef SOFPLAY_HEADPHONE
+    // Fixed, bounded diagnostic capture; no arbitrary IPC or register writes.
+    if (IoControlCode == IOCTL_SOFPROBE_MIC_CAPTURE) {
+        SofMicCapture(device, Request, InputBufferLength, OutputBufferLength);
+        return;
+    }
+#endif
     if (IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
         IoControlCode != IOCTL_SOFPROBE_PULSE_CORE0 &&
         IoControlCode != IOCTL_SOFPROBE_TEST_DMA_ALLOCATION &&
@@ -3264,12 +3295,27 @@ SofProbeEvtD0Exit(
     if (context->ToneTriggerActive) (VOID)SofProbeAcxPauseLocked(Device);
 #ifdef SOFPLAY_HEADPHONE
     HeadphoneCodecClose(context);
+    if (context->MicRetainedBdl != NULL && context->ToneHda != NULL &&
+        !NT_SUCCESS(SofMicRestoreInput(context->ToneHda))) {
+        WdfWaitLockRelease(context->AcxPowerLock);
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
 #endif
 #endif
     if (context->SessionActive) {
         SofProbeStopSessionHardware(context, &result);
         // Re-entry is allowed only after verified DMA/power restoration.
-        if (result.Result == 0) context->RomEntryAttempted = FALSE;
+        if (result.Result == 0) {
+            context->RomEntryAttempted = FALSE;
+#ifdef SOFPLAY_HEADPHONE
+            context->MicAttempted = FALSE;
+            // Both host input DMA and DSP have now been stopped and restored.
+            if (context->MicRetainedTable != NULL) WdfObjectDelete(context->MicRetainedTable);
+            if (context->MicRetainedAudio != NULL) WdfObjectDelete(context->MicRetainedAudio);
+            if (context->MicRetainedBdl != NULL) WdfObjectDelete(context->MicRetainedBdl);
+            context->MicRetainedTable = context->MicRetainedAudio = context->MicRetainedBdl = NULL;
+#endif
+        }
         KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
                    "SOFPROBE: D0 exit session stop result=%lu flags=%08lx\n",
                    result.Result, result.CleanupFlags));

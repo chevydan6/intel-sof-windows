@@ -342,3 +342,15 @@ typedef struct _SOFPROBE_TONE_RESULT {
     ULONG StreamStatus;
     ULONG Result;
 } SOFPROBE_TONE_RESULT, *PSOFPROBE_TONE_RESULT;
+
+// Five seconds, 48 kHz, two S32_LE microphone channels. No input parameters.
+#define IOCTL_SOFPROBE_MIC_CAPTURE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x819, METHOD_BUFFERED, FILE_WRITE_ACCESS)
+#define SOFMIC_CAPTURE_BYTES (48000UL * 2 * 4 * 5)
+typedef struct _SOFMIC_CAPTURE_RESULT {
+    ULONG Version, Stage, Status, CleanupStatus;
+    ULONG Bytes, Position, HdaStatus, ReplyError;
+    ULONG Command, Component, MaxPollUs, ElapsedMs;
+    ULONG Rate, Channels, Bits, Reserved;
+    UCHAR Samples[SOFMIC_CAPTURE_BYTES];
+} SOFMIC_CAPTURE_RESULT, *PSOFMIC_CAPTURE_RESULT;
