@@ -20,5 +20,5 @@ if($v.Length-ne 6 -or $v[0]-ne 1 -or $v[1]-gt 4 -or $v[5]-ne 2000) {
 }
 [pscustomobject]@{Version=$v[0];Phase=$v[1];State=@('Unarmed','Armed','WaitingForDma','Active','Finished')[$v[1]];
  Powered=[bool]$v[2];Error=('0x{0:X8}'-f $v[3]);AmpOnWrites=$v[4];MaximumMs=$v[5]}
-if($v[3]-ne 0){throw 'Preview faulted; inspect status before another test'}
+if($Arm -and $v[3]-ne 0){throw 'Preview faulted; inspect status before another test'}
 if($Arm -and $v[1]-ne 1){throw 'Preview did not arm'}

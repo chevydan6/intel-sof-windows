@@ -70,6 +70,68 @@ and passes with both cleanup/free callback orders after the correction.
 
 The kernel dump and debugger output are private under ignored
 `build/speaker-repair/right-preview-6aa5a40/`. The full dump's local and Windows
-SHA-256 values match. The correction requires a new WDK build and another dry
-hardware test; neither audible application playback nor sustained speaker
-operation has been validated yet.
+SHA-256 values match.
+
+## Corrected build and dry transport results
+
+Source `9d94d35` passed all three applicable GitHub workflows, including the
+packet-lifetime regression, WDK builds and INF validation. Its separate preview
+package installed as oem56.inf, 13.2.20.789. Two SSH-session dry playback runs
+completed without another crash. The first submitted 151 packets and completed
+150 with no late packets or driver-reported failure. Preview phase reached
+Finished with success; the amplifier recorded zero enables, zero watchdog trips
+and zero faults, and was off after cleanup.
+
+These are transport/lifecycle results, not proof of audio playback: every saved
+ring snapshot contained silence. A desktop-session retry could not start because
+Windows had no signed-in user after the crash. The task never ran and was removed.
+The later interactive tests below confirmed that nonzero samples do reach the
+right slot when the player runs on the desktop.
+
+Use `tools/invoke-right-speaker-preview.ps1 -WaveFile <wav> -OutputPrefix <new-prefix>`
+from SSH after Windows sign-in. It checks for an interactive user, runs the worker
+in that desktop, checks task completion and removes its temporary task. The worker
+saves multiple ring snapshots and rejects silence, nonzero left samples, excessive
+right peaks or a preview error. A zero task result requires those sample checks
+as well as amplifier shutdown. `-Powered` remains a separate explicit option,
+only appropriate after a successful dry run. Restart the parent device with audio
+services stopped between attempts; the preview cannot rearm in place.
+
+## First powered application preview
+
+After desktop sign-in, the first interactive dry run captured nonzero right PCM
+with all left samples zero, but finished with `0xC000009C` (device data error).
+The amplifier stayed off. The current status does not distinguish a stalled
+position from inactive DMA or an error detected while advancing the ring, so
+the exact cause and timing remain unresolved. Do not describe this as a solved
+fault merely because subsequent runs passed.
+
+A second desktop dry run used a three-second source WAV and passed the two-second
+preview cutoff. All seven nonempty ring snapshots had zero left samples and
+right peaks below the ceiling; sampled phases progressed through Armed and
+Active to Finished with success. Amplifier enables and watchdog trips stayed zero.
+
+One powered run of that same melody then passed: Finished with success, exactly
+one amplifier enable, zero watchdog trips/faults, and verified off after cleanup.
+Across its saved rings, 6,000 right samples were nonzero, every left sample was
+zero, and the maximum right magnitude was 436,125,245 (ceiling 536,870,911).
+Ubuntu recorded the complete interval externally. Waveform correlation located
+the source melody about 7.45 seconds into the capture (normalized correlation
+0.398); no recorded samples clipped after the first startup second. This confirms
+an acoustic signal corresponding to the melody, not an absence of mechanical
+distortion or safe speaker temperature. Ambient sound and the recording path
+limit acoustic conclusions. Private audio and machine evidence remain under
+ignored `build/speaker-repair/right-preview-9d94d35/`.
+
+A subsequent dry retry with the original 1.5-second WAV also passed, including
+nonzero samples and clean shutdown. There have been no further crashes in these
+corrected-build tests. The intermittent device-data error still needs diagnosis,
+and normal sustained speaker playback is not yet enabled. Await the user's
+listening/temperature check before extending the audible test; preserve the
+existing two-second parent limit and independent 100 ms / 2200 ms amp limits.
+
+After saving the results, restored the previously working headphone package
+oem54.inf 11.0.0.373 and restarted both Windows audio services. The amplifier
+was verified off with no faults. That older headphone package does not contain
+the new packet-lifetime fix; the corrected headphone artifact passed CI but
+still needs its own hardware validation before replacing the known baseline.
