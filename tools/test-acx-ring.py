@@ -60,6 +60,7 @@ typedef struct {
     int AcxHardwareReady, AcxEosReceived, AcxPcmNeedsReset;
     UCHAR *AcxRing, *ToneHda;
     ULONG AcxLastPosition, AcxMaxAdvance, AcxLatePackets, AcxPacketBytes, AcxLastPacket;
+    ULONG AcxObservedPosition, AcxObservedStatus, AcxBoundaryReads, AcxCompletionReads;
     ULONGLONG AcxLinearPosition;
 } CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 typedef CONTEXT *WDFDEVICE;

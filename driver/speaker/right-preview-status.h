@@ -11,4 +11,5 @@ typedef struct {
     ULONG Version, Reason, PhaseAtStop, Ticks;
     ULONG ElapsedMs, GapMs, PreviousPositionLow, PreviousPositionHigh;
     ULONG ObservedPositionLow, ObservedPositionHigh, TransportFlags, AdvanceStatus;
+    ULONG HardwarePosition, HardwareStatus, BoundaryReads, CompletionReads;
 } SOF_RIGHT_PREVIEW_DIAGNOSTICS;

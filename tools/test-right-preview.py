@@ -53,6 +53,7 @@ typedef void VOID;
 typedef struct Context {
     SOF_RIGHT_PREVIEW Preview;
     SOF_RIGHT_PREVIEW_DIAGNOSTICS PreviewDiagnostics;
+    ULONG AcxObservedPosition, AcxObservedStatus, AcxBoundaryReads, AcxCompletionReads;
     SOF_RIGHT_FILTER PreviewFilter;
     int AcxPowerLock, AcxBufferLock;
     struct Context *PreviewTimer;
@@ -125,7 +126,7 @@ int main(void) {
     tick(&c,20,7680); assert(renews==1);
     for(int i=0;i<98;i++) tick(&c,20,7680);
     assert(c.Preview.Phase==4 && !ampOn && stops==1 && !c.Preview.Error);
-    assert(sizeof(c.PreviewDiagnostics)==48);
+    assert(sizeof(c.PreviewDiagnostics)==64 && c.PreviewDiagnostics.Version==2);
     assert(c.PreviewDiagnostics.Reason==SofRightDeadline && c.PreviewDiagnostics.ElapsedMs==2000);
     int before=starts; tick(&c,20,7680); assert(starts==before);
     powerLock=1; assert(SofRightPreviewBegin(&c)==STATUS_INVALID_DEVICE_STATE); powerLock=0;

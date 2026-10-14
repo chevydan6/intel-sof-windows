@@ -60,7 +60,7 @@ static NTSTATUS SofRightPreviewBegin(PSOFPROBE_DEVICE_CONTEXT c)
 {
     if (c->Preview.Phase != 1) return STATUS_INVALID_DEVICE_STATE;
     RtlZeroMemory(&c->PreviewDiagnostics, sizeof(c->PreviewDiagnostics));
-    c->PreviewDiagnostics.Version = 1;
+    c->PreviewDiagnostics.Version = 2;
     c->Preview.Phase = 2;
     c->Preview.Started = c->Preview.LastCheck = SofRightNow();
     c->Preview.Position = 0;
@@ -98,6 +98,10 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
     }
     WdfSpinLockAcquire(c->AcxBufferLock);
     status = SofProbeAcxAdvanceLocked(c);
+    c->PreviewDiagnostics.HardwarePosition = c->AcxObservedPosition;
+    c->PreviewDiagnostics.HardwareStatus = c->AcxObservedStatus;
+    c->PreviewDiagnostics.BoundaryReads = c->AcxBoundaryReads;
+    c->PreviewDiagnostics.CompletionReads = c->AcxCompletionReads;
     c->PreviewDiagnostics.AdvanceStatus = (ULONG)status;
     if (!NT_SUCCESS(status)) c->PreviewDiagnostics.Reason = SofRightAdvanceError;
     if (NT_SUCCESS(status)) {

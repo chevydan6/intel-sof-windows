@@ -82,6 +82,7 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     ULONG AcxPcmResets;
     ULONG AcxStartPosition;
     ULONG AcxLastPosition;
+    ULONG AcxObservedPosition, AcxObservedStatus, AcxBoundaryReads, AcxCompletionReads;
     ULONGLONG AcxLinearPosition;
     ULONG AcxLatePackets;
     ULONG AcxMaxAdvance;
@@ -242,6 +243,8 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
     if (context->AcxHardwareReady && context->AcxRing != NULL) {
         RtlZeroMemory(context->AcxRing, SOFPROBE_TONE_BYTES);
         context->AcxLastPosition = 0;
+        context->AcxObservedPosition = context->AcxObservedStatus = 0;
+        context->AcxBoundaryReads = context->AcxCompletionReads = 0;
         context->AcxLinearPosition = 0;
         context->AcxLatePackets = 0;
         context->AcxMaxAdvance = 0;
@@ -270,8 +273,12 @@ SofProbeAcxAdvanceLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     if (!Context->AcxHardwareReady || Context->AcxRing == NULL ||
         Context->ToneHda == NULL) return STATUS_DEVICE_NOT_READY;
     position = READ_REGISTER_ULONG((PULONG)(Context->ToneHda + 0x164));
+    Context->AcxObservedPosition = position;
+    Context->AcxObservedStatus = READ_REGISTER_UCHAR(Context->ToneHda + 0x163);
+    if (position == SOFPROBE_TONE_BYTES) ++Context->AcxBoundaryReads;
+    if (Context->AcxObservedStatus & 4) ++Context->AcxCompletionReads;
     if (position >= SOFPROBE_TONE_BYTES ||
-        (READ_REGISTER_UCHAR(Context->ToneHda + 0x163) & 0x1c) != 0)
+        (Context->AcxObservedStatus & 0x1c) != 0)
         return STATUS_DEVICE_DATA_ERROR;
     advance = (position + SOFPROBE_TONE_BYTES - Context->AcxLastPosition) % SOFPROBE_TONE_BYTES;
     first = min(advance, SOFPROBE_TONE_BYTES - Context->AcxLastPosition);
@@ -3073,7 +3080,7 @@ SofProbeEvtIoDeviceControl(
         if (NT_SUCCESS(status)) {
             WdfWaitLockAcquire(context->AcxPowerLock, NULL);
             *out = context->PreviewDiagnostics;
-            out->Version = 1;
+            out->Version = 2;
             WdfWaitLockRelease(context->AcxPowerLock);
         }
         WdfRequestCompleteWithInformation(Request, status, NT_SUCCESS(status) ? sizeof(*out) : 0);
