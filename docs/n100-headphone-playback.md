@@ -139,3 +139,11 @@ This revision is prepared for calibration, not yet acoustically validated.
 Before installation, persist a -24 dB Windows endpoint level and verify it
 afterward; increase only in measured steps with the headphones off ears.
 The acoustic results above apply to the original -24.08 dB transport.
+
+Full-range source `45db6da` passed [WDK build, INF validation and host tests
+38528570160](https://github.com/chevydan6/windows-sof/actions/runs/38528570160).
+It has not yet been installed for the gain sweep. The previously verified
+`e238066` package remains installed while awaiting isolated tone playback.
+`tools/analyze-headphone-capture.py` reproduces the earlier measurements and
+optionally compares fundamental levels with a reference recording. It requires
+NumPy/SciPy and rejects incomplete or unexpected microphone WAV formats.
