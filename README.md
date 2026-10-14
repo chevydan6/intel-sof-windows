@@ -10,11 +10,13 @@ distortion.** The shutdown-only amplifier driver requests EN low; this is not a
 measurement of temperature or proof that the hardware fault is resolved. See the
 [thermal investigation](docs/n100-amplifier-thermal-review.md).
 
-Headphone work uses a separate SSP0 transport and an RT5682 I2C driver. Codec
-identification, muted calibration, and shutdown have been verified on the target.
-Muted headphone streaming passed, and a bounded three-second headphone tone
-was captured by a separate Ubuntu microphone. Normal continuous playback and
-jack handling remain unfinished; the endpoint is left muted after each test. See [headphone bring-up](docs/n100-headphone-bringup.md).
+Normal headphone playback now works through Windows applications on the target.
+Stream start/stop, repeated playback, physical jack removal/reinsertion, Windows
+volume/mute, and acoustic tone capture have been verified. The RT5682 output
+powers down when its stream stops; a fixed -24.08 dB transport ceiling remains.
+See [headphone playback and distortion checks](docs/n100-headphone-playback.md).
+The built-in microphones support [bounded diagnostic recording](docs/n100-microphone-capture.md),
+but do not yet expose a Windows microphone endpoint.
 Earlier successful speaker DMA tests are historical evidence, not a statement
 that the current build enables speakers. General power recovery remains unfinished.
 

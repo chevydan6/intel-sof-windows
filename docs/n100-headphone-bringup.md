@@ -59,12 +59,13 @@ The status field `ThermalHold=1` means the speaker hold is active. With
 analog output remains muted. Packet counters alone do not establish audible
 quality, electrical signal integrity, or temperature.
 
-## Remaining work
+## Follow-up status
 
-The corrected muted pipeline is now verified (see below). Develop normal playback lifecycle and jack
-insertion/removal handling, then validate stereo output and quality beyond the
-bounded acoustic test. A short acoustic output test is recorded below; normal playback and full
-audio-quality validation are still unfinished. Speaker heating and possible damage remain unresolved.
+Normal playback lifecycle, physical jack handling, repeated streams and acoustic
+volume/distortion checks have since been implemented and verified. See the
+[current headphone playback report](n100-headphone-playback.md). The sections
+below retain the historical muted/audition bring-up results. General power
+recovery and the separate speaker heating fault remain unresolved.
 
 Microphone recordings stay in ignored local `build/` storage. They are not
 uploaded to GitHub or included in driver packages.
