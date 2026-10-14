@@ -26,8 +26,8 @@ closing I2C, without waiting for its callback while holding its lock.
 
 Normal playback uses unity DAC gain (`0xaeae`, per the Linux RT5682 volume
 control). The current source converts left-aligned S32 PCM to S24_4LE by
-dividing by 256, preserving the full-scale range. Windows endpoint volume
-controls attenuation. The older isolated audition
+dividing by 1,024: format conversion plus 12.04 dB attenuation. Windows endpoint
+volume can further attenuate this fixed ceiling. The older isolated audition
 still uses -39 dB DAC gain, but its test wrapper is superseded for the normal
 playback package. No arbitrary gain/register controls were added.
 
@@ -135,15 +135,47 @@ The user subsequently requested the highest practical clean headphone level.
 The source now removes the extra fixed PCM attenuation while retaining the
 format conversion. Signed full-scale input maps to -8,388,608 through
 8,388,607 without overflow. Codec gain and speaker hold are unchanged.
-This revision is prepared for calibration, not yet acoustically validated.
+This temporary revision was built and subsequently used for calibration.
 Before installation, persist a -24 dB Windows endpoint level and verify it
 afterward; increase only in measured steps with the headphones off ears.
 The acoustic results above apply to the original -24.08 dB transport.
 
 Full-range source `45db6da` passed [WDK build, INF validation and host tests
 38528570160](https://github.com/chevydan6/windows-sof/actions/runs/38528570160).
-It has not yet been installed for the gain sweep. The previously verified
-`e238066` package remains installed while awaiting isolated tone playback.
+It was installed as `oem41.inf`, version `7.29.0.329`, for the gain sweep.
+Endpoint identity changed during installation; volume persisted at -24.0824 dB.
+The identity check muted the new endpoint until it was positively identified
+and its low level verified.
 `tools/analyze-headphone-capture.py` reproduces the earlier measurements and
 optionally compares fundamental levels with a reference recording. It requires
 NumPy/SciPy and rejects incomplete or unexpected microphone WAV formats.
+
+
+## Gain sweep and chosen ceiling, 2026-10-14
+
+With YouTube paused and headphones beside the microphones, the temporary
+full-range transport played -1 dBFS L997/R1499 Hz tones at Windows levels
+-24.0824, -18, -12, -6 and 0 dB. Each 16-second run recorded five seconds,
+verified no late packets, and checked codec power-down and speaker hold.
+The microphone fundamentals tracked the increments closely (each final
+6 dB step measured about 5.94–6.05 dB). At 0 dB, recorded peaks were -12.62
+and -23.38 dBFS, with no full-scale captured samples. The acoustic harmonic
+ratios across both microphones/tones were 0.10–1.14%.
+
+Bass validation used -1 dBFS L97/R151 Hz tones. The nearby right earcup's
+151 Hz signal on microphone 1 rose 5.82 dB from Windows -12 to -6 dB, while
+its harmonic ratio increased from 1.75% to 3.22%. This is evidence of
+increasing acoustic nonlinearity; it does not isolate the DAC, headphones or
+microphone as the cause. The distant left earcup's 97 Hz fundamental was
+weak and its harmonic ratios cannot establish a useful electrical limit.
+No further bass increase was attempted.
+
+The selected production ceiling is therefore 1/4 (-12.04 dB), approximately
+the lower bass-tested step and 12.04 dB louder than the original 1/16 ceiling.
+This is a conservative practical setting for this headphone/placement, not
+a certified distortion-free maximum for every load or frequency. Codec analog
+gain and the speaker shutdown driver are unchanged. The full-range build was
+for calibration; it is not the intended final everyday maximum.
+
+Private gain recordings and logs remain under ignored `build/headphone-gain/`.
+Analysis supports `--tones 97 151` for the bass recordings.

@@ -14,7 +14,7 @@ from scipy.io import wavfile
 from scipy.signal import welch
 
 
-def analyze(path):
+def analyze(path, tone_hz=(997, 1499)):
     rate, raw = wavfile.read(path)
     if rate != 48000 or raw.ndim != 2 or raw.shape[1] != 2 or raw.dtype != np.int32:
         raise ValueError('Expected 48 kHz stereo signed 32-bit microphone capture')
@@ -28,7 +28,7 @@ def analyze(path):
         def band(hz):
             return float(psd[np.abs(frequencies - hz) <= 2].sum())
         tones = {}
-        for hz in (997, 1499):
+        for hz in tone_hz:
             fundamental = band(hz)
             harmonics = sum(band(hz * n) for n in range(2, 6))
             tones[str(hz)] = {
@@ -48,13 +48,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('recording', type=Path)
     parser.add_argument('--reference', type=Path)
+    parser.add_argument('--tones', type=int, nargs=2, default=(997,1499),
+                        help='Left/right source frequencies in Hz')
     args = parser.parse_args()
-    result = analyze(args.recording)
+    if any(hz < 20 or hz * 5 + 2 >= 24000 for hz in args.tones):
+        parser.error('Tone fundamentals and first five harmonics must fit the capture band')
+    result = analyze(args.recording, args.tones)
     if args.reference:
-        ref = analyze(args.reference)
+        ref = analyze(args.reference, args.tones)
         result['reference'] = str(args.reference)
         for current, prior in zip(result['channels'], ref['channels']):
-            for hz in ('997', '1499'):
+            for hz in map(str,args.tones):
                 current['tones'][hz]['rise_from_reference_db'] = (
                     current['tones'][hz]['fundamental_dbfs'] - prior['tones'][hz]['fundamental_dbfs'])
     print(json.dumps(result, indent=2, allow_nan=False))

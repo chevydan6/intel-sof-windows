@@ -279,8 +279,9 @@ SofProbeAcxCopySpeakerSamples(_Out_writes_bytes_(Bytes) UCHAR *Destination,
         RtlCopyMemory(&sample, Source + i, sizeof(sample));
 #ifdef SOFPLAY_HEADPHONE
         // Convert left-aligned Windows S32 PCM to right-aligned SOF S24_4LE.
-        // Preserve the normal full-scale range; Windows controls volume.
-        sample /= 256;
+        // Retain 12.04 dB headroom after acoustic calibration on this board.
+        // Windows volume can further attenuate this fixed output ceiling.
+        sample /= 1024;
 #else
         sample = SofPlayAttenuateSpeakerSample(sample);
 #endif
@@ -3142,7 +3143,7 @@ SofProbeEvtIoDeviceControl(
         acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
 #ifdef SOFPLAY_HEADPHONE
         // Legacy field name; report the active output's PCM attenuation.
-        acx->SpeakerAttenuationCentiDb = 0;
+        acx->SpeakerAttenuationCentiDb = 1204;
 #endif
         acx->StartupCount = context->AcxStartupCount;
         acx->StartupStage = context->AcxStartupStage;
