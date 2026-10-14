@@ -5,6 +5,7 @@
 #include <wdf.h>
 #include <acpiioct.h>
 #include <gpio.h>
+#define RESHUB_USE_HELPER_ROUTINES
 #include <reshub.h>
 #include "sofamp-policy.h"
 
