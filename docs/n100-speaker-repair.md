@@ -486,3 +486,18 @@ ring corruption, stalled DMA, missed renewal, late callback, user-mode rejection
 owner cleanup, the unchanged short cap, the new absolute cap and shutdown order.
 Windows builds and amp-off hardware validation are pending. Do not increase the
 level automatically or infer sustained thermal safety from a completed test.
+
+
+Source `b145c6b` passed Windows builds and INF verification for headphones
+(38553435099), amplifier (38553435855), ACX (38553435053) and standalone probe
+(38553435144). Installed amplifier `oem53.inf` version `11.0.0.508` and parent
+`oem54.inf` version `11.0.0.373` passed package hash/signature, exact hardware,
+held-DSP and amplifier-off checks. The target also rejected application calls
+to both START variants and RENEW with zero amplifier enables.
+
+The new changing-note dry-right mode returned flags `0xC0C`, full five-second
+capture and zero capture/cleanup errors. Saved amplifier status confirms zero
+enables, inactive state, accepted off request and no fault/watchdog trip.
+Headphone audio services were restored. No two-second powered test or new
+level increase has been performed; awaiting current physical temperature
+feedback after the earlier audible left pulse.
