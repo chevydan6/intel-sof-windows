@@ -179,3 +179,34 @@ for calibration; it is not the intended final everyday maximum.
 
 Private gain recordings and logs remain under ignored `build/headphone-gain/`.
 Analysis supports `--tones 97 151` for the bass recordings.
+
+
+### Final installed gain validation
+
+Source `ea9c9d9` passed [WDK build, independent INF verification and host tests
+38529731127](https://github.com/chevydan6/windows-sof/actions/runs/38529731127).
+It is installed as `oem42.inf`, version `7.39.33.883`. The loaded service's
+driver binary SHA-256 matches the pinned build artifact:
+`D2717E1EBDFFC40907BC57C42162222B1C6DFE26B5FF63AAB7F24ED5E6EC8C8D`.
+Codec and amplifier drivers were not replaced.
+
+At Windows 0 dB, two bass playback cycles submitted 3,346 packets, completed
+3,344, recorded zero late packets and exercised one PCM rearm. Both ordinary
+stream releases muted and powered down the codec; cleanup verified DSP
+baseline and speaker shutdown request. A brief interruption/transient in the
+first final acoustic recording prompted a repeat rather than treating the
+whole recording as steady state.
+
+The repeat's 151 Hz fundamental differed from the earlier -12 dB calibration
+reference by only -0.009 and -0.031 dB on the two microphones. On the nearby
+microphone, its acoustic harmonic ratio was 1.98%, versus 3.22% at the louder
+rejected step. The distant earcup/bass limitations above still apply. The
+repeat completed successfully with a full five-second capture, no late packets
+and verified shutdown. This does not claim zero distortion or a universal
+maximum for arbitrary headphones/music.
+
+Final readback reports 12.04 dB PCM attenuation, headphone-only mode and
+speaker thermal hold. All test tasks were removed. Audio services are running
+with automatic startup. Windows endpoint volume was left at -6 dB, unmuted,
+for a first listen: about +6.04 dB versus the original full-volume output,
+with another 6 dB available up to the new ceiling. No OS reboot was performed.
