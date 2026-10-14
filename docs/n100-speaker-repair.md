@@ -31,7 +31,7 @@ or speaker test. A verified parent restart is required afterward.
 It mutes the headphone codec, releases its idle PCM, and builds a separate SSP1
 S32 graph using IDs 20/22/24/25, distinct from the DMIC graph. The fixed format
 matches the topology: 48 kHz, I2S, 3.072 MHz BCLK, stereo 32-bit slots and
-19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -30.10 dBFS peak;
+19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -18.06 dBFS peak;
 the other channel is exactly zero. The ring holds an exact integer number of
 cycles. No arbitrary frequency, sample data, amplitude or enable duration is
 accepted from applications.
@@ -192,3 +192,22 @@ progress must be established on the installed firmware. Ordinary headphone
 playback and the fixed amplifier lease are unchanged. Initial validation is
 an amplifier-off run. The user has not switched out of Windows to compare
 speaker behavior after the original heating.
+
+Source `3ed76d0` passed build 38538135161 and installed as `oem49.inf`, version
+`8.51.55.620`. Its dry-left run completed with full capture, flags `0xC01`,
+zero status/cleanup errors and no amplifier enable. Two stable firmware records
+were read at relative offset 76. Both report flags `0x100` (host position valid;
+DAI position invalid). Host positions were 28800 and 5760 bytes. Their change
+modulo the 49152-byte host ring is 26112, exactly matching the microphone capture
+byte-count change (1542112-385504) modulo the same ring size. This establishes
+firmware-side host progress, not valid SSP position or electrical output.
+Zero DAI position must not be interpreted as a stalled DAI because its validity
+flag is absent. Direct SSP reads remained unavailable.
+
+For one further acoustic comparison the fixed tone is raised to -18.06 dBFS,
+with unchanged channel isolation, 40 ms stop and independent amplifier lease.
+This is still below the board's -9 dB maximum-volume attenuation, but that
+comparison alone does not establish safety for damaged hardware or continuous
+playback. If the stronger right pulse remains inaudible, do not continue
+raising its level; obtain a different acoustic/electrical or known-driver
+comparison instead. Continuous speaker playback remains disabled.
