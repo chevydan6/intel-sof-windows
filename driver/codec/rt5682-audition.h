@@ -94,7 +94,7 @@ static NTSTATUS CodecEnableHeadphones(WDFDEVICE device, ULONG *stage, USHORT gai
     READ(RT5682_DAC1_DIG_VOL);
     if (value != 0x4646) { status = STATUS_DEVICE_DATA_ERROR; goto finish; }
     // Linux DAC TLV: 0xae = 87 steps at 0.75 dB above -65.25 dB: unity.
-    // The transport still applies a fixed -24.08 dB ceiling before the codec.
+    // The parent converts PCM format; Windows endpoint volume sets the level.
     status = WriteRegister(device, RT5682_DAC1_DIG_VOL, gain);
     if (!NT_SUCCESS(status)) goto finish;
     READ(RT5682_DAC1_DIG_VOL);

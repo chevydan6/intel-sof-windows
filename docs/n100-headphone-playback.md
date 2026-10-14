@@ -25,8 +25,9 @@ Other query handles do not own or stop playback. D0 exit cancels the timer befor
 closing I2C, without waiting for its callback while holding its lock.
 
 Normal playback uses unity DAC gain (`0xaeae`, per the Linux RT5682 volume
-control) and uses the transport's fixed 1/8 (-18.06 dB) output ceiling.
-Windows volume is applied before that ceiling. The older isolated audition
+control). The current source converts left-aligned S32 PCM to S24_4LE by
+dividing by 256, preserving the full-scale range. Windows endpoint volume
+controls attenuation. The older isolated audition
 still uses -39 dB DAC gain, but its test wrapper is superseded for the normal
 playback package. No arbitrary gain/register controls were added.
 
@@ -126,3 +127,15 @@ unchanged. Full-scale signed PCM conversion remains within 24-bit bounds with
 18.06 dB of headroom. The acoustic results above precede this gain increase.
 The status reader recognizes the earlier version-8 hardcoded speaker field
 and reports the actual attenuation for new headphone builds.
+
+
+## Full-range calibration preparation
+
+The user subsequently requested the highest practical clean headphone level.
+The source now removes the extra fixed PCM attenuation while retaining the
+format conversion. Signed full-scale input maps to -8,388,608 through
+8,388,607 without overflow. Codec gain and speaker hold are unchanged.
+This revision is prepared for calibration, not yet acoustically validated.
+Before installation, persist a -24 dB Windows endpoint level and verify it
+afterward; increase only in measured steps with the headphones off ears.
+The acoustic results above apply to the original -24.08 dB transport.
