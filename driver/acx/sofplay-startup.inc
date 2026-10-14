@@ -155,7 +155,8 @@ SofPlayPrepareSpeaker(_In_ PSOFPROBE_DEVICE_CONTEXT Context)
     static const ULONG buffer[] = {44,0x30200000,2,12,1,0,0,768,0x71,0,0};
 #ifdef SOFPLAY_HEADPHONE
     static const ULONG host[] = {76,0x30010000,0,1,1,0,0,36,0,2,2,0,1,0,0,0,0,0,0};
-    static const ULONG dai[] = {80,0x30010000,4,2,1,0,0,36,0,0,2,0,1,0,0,0,0,1,0,0};
+    // sof_ipc_comp_dai tail: direction, dai_index, type, reserved.
+    static const ULONG dai[] = {80,0x30010000,4,2,1,0,0,36,0,0,2,0,1,0,0,0,0,0,1,0};
     // Packaged RT5682 topology: SSP0, I2S, 19.2 MHz MCLK, 2.4 MHz BCLK,
     // 48 kHz, two 25-bit slots carrying 24 valid bits. No SSP1 component.
     static const ULONG config[] = {112,0x80010000,1,0,0x4001,0,0,0,0,0,0,0,0,60,
