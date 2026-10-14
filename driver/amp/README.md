@@ -36,14 +36,21 @@ Build with the WDK using `msbuild driver/amp/sofamp.vcxproj /m
 `python3 tools/test-amp-hold.py` for sanitizer-backed resource rejection and the
 production held D0 callback. These checks do not exercise GpioClx on the target.
 
-The next hardware step requires verifying the held ACX package and observing
-amplifier-child enumeration, then validating the shutdown-only package's GPIO
-completion. Installation, parent enable, GPIO ownership, cooling under this
-driver, and speaker condition have not been tested. Keep the existing target
-disabled until that controlled maintenance step is ready. Before playback can
-return, implement and verify the full amplifier lifecycle and investigate the
-remaining distorted signal/thermal cause. Lowering EN is not by itself evidence
-that the prior heating cause is corrected.
+The first controlled maintenance installation succeeded on 2026-10-14. The held
+ACX package is `oem26.inf`, version `1.26.8.27`; the shutdown-only amplifier
+package is `oem27.inf`, version `1.27.25.292`. The parent is enabled with playback
+held, allowing the amplifier child to own its GPIO. Readback showed stage 7,
+ThermalHold 1, HardwareReady 0, no stream runs, HDA DMA stopped, and DSP ADSPCS
+`0x00000F0F`. The amplifier reported stage 3, status 0, and one accepted off write.
+Both devices reported OK, and both Windows audio services remained stopped.
+There was no reboot or playback test. This verifies GPIO resource ownership and
+an accepted shutdown request, not physical output voltage, temperature, speaker
+integrity, or boot/suspend behavior. Do not replace the held ACX package with an
+older package that automatically starts firmware/playback.
+
+Before playback can return, implement and verify the full amplifier lifecycle
+and investigate the remaining distorted signal/thermal cause. Lowering EN is not
+by itself evidence that the prior heating cause is corrected.
 
 References: [Windows GPIO resource connection](https://learn.microsoft.com/en-us/windows-hardware/drivers/gpio/connecting-a-kmdf-driver-to-gpio-i-o-pins),
 [GPIO write contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/gpio/ni-gpio-ioctl_gpio_write_pins),
