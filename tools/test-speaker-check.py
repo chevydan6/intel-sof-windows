@@ -72,7 +72,7 @@ int main(void){
   int64_t sum=0;
   SofSpeakerFillTestSamples(pcm,6144,ch);
   for(ULONG i=0;i<6144;i++){
-   assert(pcm[2*i+1-ch]==0);assert(llabs(pcm[2*i+ch])<=16777216);
+   assert(pcm[2*i+1-ch]==0);assert(llabs(pcm[2*i+ch])<=67108864);
    assert(pcm[2*i+ch]==pcm[2*(i%48)+ch]);sum+=pcm[2*i+ch];
   }
   assert(sum==0);

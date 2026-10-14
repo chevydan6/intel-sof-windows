@@ -31,7 +31,7 @@ or speaker test. A verified parent restart is required afterward.
 It mutes the headphone codec, releases its idle PCM, and builds a separate SSP1
 S32 graph using IDs 20/22/24/25, distinct from the DMIC graph. The fixed format
 matches the topology: 48 kHz, I2S, 3.072 MHz BCLK, stereo 32-bit slots and
-19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -42.14 dBFS peak;
+19.2 MHz MCLK. Only one channel receives a 1 kHz sine at -30.10 dBFS peak;
 the other channel is exactly zero. The ring holds an exact integer number of
 cycles. No arbitrary frequency, sample data, amplitude or enable duration is
 accepted from applications.
@@ -98,9 +98,30 @@ zero status/cleanup errors and no amplifier faults/watchdog trips. The user
 also confirmed it stayed cool. Its recorded 1 kHz component around the expected
 pulse was approximately -88/-83 dBFS, still insufficient to assess distortion.
 
-The next diagnostic raises only the fixed sample amplitude by 6.02 dB to
+The second diagnostic raised only the fixed sample amplitude by 6.02 dB to
 -42.14 dBFS, retaining the 40 ms stop and unchanged amplifier watchdog. It
 checks the full host ring against the channel-specific test signal after PCM
 preparation and again before requesting amplifier enable. Corrupt or cleared
 samples abort with the amplifier off; host tests inject both conditions.
 This check does not establish the physical SSP waveform or speaker condition.
+
+Source `b32155c` passed [build 38535084193](https://github.com/chevydan6/windows-sof/actions/runs/38535084193)
+and installed as `oem46.inf`, version `8.26.30.273`. The dry-left, pulse-left
+and pulse-right tests returned `0xC01`, `0xF03`, `0xF04` respectively, full
+captures and zero status/cleanup errors. The host sample ring was intact at
+the pre-enable check. Shutdown checks passed with no amplifier faults or
+watchdog trips. The user reported both powered tests remained cool and heard
+nothing. Audio services were restored afterward with amplifier-off confirmed.
+
+Using a 30 ms Hann window and 5 ms steps, the maximum 1 kHz component in
+0.95–1.15 s on the right test was -83.7/-79.9 dBFS at the two microphones,
+peaking at 1.055 s. These are 4.7/6.1 dB above the corresponding original
+right-test levels, consistent with the requested 6 dB increase, and 9/13.9 dB
+above each recording's maximum pre-test component (0.15–0.85 s). The left
+test remained close to background. This is a useful channel difference,
+not proof of speaker damage or a clean acoustic waveform; placement,
+electrical coupling and hardware faults remain possible.
+
+The next fixed diagnostic uses -30.10 dBFS (12.04 dB above the second test),
+with the same sample verification, channel isolation, 40 ms stop and watchdog.
+It does not enable a general speaker playback path.
