@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Bounded Windows playback test with RT5682 hardware mutes asserted throughout.
-param([switch]$Player, [switch]$Audition)
+param([switch]$Player, [switch]$Audition, [string]$MicrophoneOutput)
+if ($MicrophoneOutput -and !$Audition) { throw 'Microphone recording requires the bounded audition' }
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $wav = Join-Path $root 'headphone-test.wav'
@@ -23,6 +24,7 @@ function Read-Transport {
  return ,$v
 }
 $failure = $null
+$micProcess = $null
 Start-Transcript -Path (Join-Path $root $(if ($Audition) {'audition-test.log'} else {'muted-test.log'})) -Force | Out-Null
 try {
  . (Join-Path $root 'read-live-snapshot.ps1') -AcxStatus | Out-Host
@@ -67,9 +69,29 @@ try {
   Assert-AmpOff
   $pre = & (Join-Path $root 'read-headphone-codec.ps1')
   if ($pre.Prepared -ne 1) { throw 'Codec is not prepared; refusing audition' }
+  if ($MicrophoneOutput) {
+   $readyFile = Join-Path $root 'microphone.ready'
+   Remove-Item $readyFile -ErrorAction SilentlyContinue
+   $args = '-NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $root 'test-microphone.ps1')+'" -DuringAudition -Output "'+$MicrophoneOutput+'" -ReadyFile "'+$readyFile+'"'
+   $micProcess = Start-Process powershell.exe -ArgumentList $args -PassThru -WindowStyle Hidden -RedirectStandardOutput ($MicrophoneOutput+'.log') -RedirectStandardError ($MicrophoneOutput+'.err')
+   $null = $micProcess.Handle # Keep a handle so ExitCode remains available after exit.
+   for($j=0;$j -lt 200;$j++) {
+    if(Test-Path $readyFile){break}
+    if($micProcess.HasExited){throw 'Microphone recorder exited before ready'}
+    Start-Sleep -Milliseconds 20
+   }
+   if(!(Test-Path $readyFile)){throw 'Microphone recorder did not become ready'}
+  }
   Write-Host 'Starting fixed low-gain headphone audition; automatic mute and power-down follows.'
   & (Join-Path $root 'read-headphone-codec.ps1') -Audition | Format-List
   Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\10EC5682\0\Device Parameters' | Select-Object CodecAuditionStage,CodecAuditionStatus | Format-List
+ }
+ if ($micProcess) {
+  if(!$micProcess.WaitForExit(10000)){throw 'Microphone recording exceeded its deadline'}
+  Get-Content ($MicrophoneOutput+'.log') | Write-Host
+  Get-Content ($MicrophoneOutput+'.err') | Write-Host
+  $micProcess.Refresh()
+  if($null -eq $micProcess.ExitCode -or $micProcess.ExitCode -ne 0){throw ('Microphone recorder exit status: '+$micProcess.ExitCode)}
  }
  $finished = $false
  for ($i=0;$i -lt 30;$i++) {
@@ -93,6 +115,9 @@ try {
  Write-Host "FAILED: $_"
  Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\10EC5682\0\Device Parameters' | Select-Object CodecAuditionStage,CodecAuditionStatus | Format-List
 } finally {
+ if($micProcess -and !$micProcess.HasExited) {
+  if(!$micProcess.WaitForExit(10000)) { $micProcess.Kill(); $failure='Microphone recorder timed out' }
+ }
  Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
  Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
  Stop-Service Audiosrv -Force -ErrorAction Continue
