@@ -65,6 +65,11 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     ULONG AcxLatePackets;
     ULONG AcxMaxAdvance;
     ULONG AcxPacketBytes;
+    ULONG AcxLastPacket;
+    ULONG AcxFormatTag;
+    ULONG AcxContainerBits;
+    ULONG AcxValidBits;
+    ULONG AcxSubFormat;
     PUCHAR AcxRing;
     ULONG AcxStartupCount;
     ULONG AcxStartupStage;
@@ -102,6 +107,20 @@ C_ASSERT(sizeof(SOFPROBE_BDL_ENTRY) == 16);
 
 #ifdef SOFPLAY_INTEGRATED
 static NTSTATUS SofPlayRearmPcmLocked(_In_ PSOFPROBE_DEVICE_CONTEXT Context);
+VOID
+SofProbeAcxRecordFormat(_In_ WDFDEVICE Device, _In_ ULONG Tag,
+                         _In_ ULONG Bits, _In_ ULONG ValidBits,
+                         _In_ ULONG SubFormat)
+{
+    PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
+    WdfSpinLockAcquire(context->AcxBufferLock);
+    context->AcxFormatTag = Tag;
+    context->AcxContainerBits = Bits;
+    context->AcxValidBits = ValidBits;
+    context->AcxSubFormat = SubFormat;
+    WdfSpinLockRelease(context->AcxBufferLock);
+}
+
 NTSTATUS
 SofProbeAcxClaimStream(_In_ WDFDEVICE Device)
 {
@@ -268,6 +287,7 @@ SofProbeAcxWritePacket(_In_ WDFDEVICE Device,
         if (first < Bytes)
             SofProbeAcxCopySpeakerSamples(context->AcxRing, Source + first, Bytes - first);
         KeMemoryBarrier();
+        context->AcxLastPacket = Packet;
         status = STATUS_SUCCESS;
     }
     WdfSpinLockRelease(context->AcxBufferLock);
@@ -2892,12 +2912,14 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_PREPARE_TONE &&
         IoControlCode != IOCTL_SOFPROBE_RUN_TONE &&
         IoControlCode != IOCTL_SOFPROBE_STOP_TONE &&
-        IoControlCode != IOCTL_SOFPROBE_ACX_STATUS) {
+        IoControlCode != IOCTL_SOFPROBE_ACX_STATUS &&
+        IoControlCode != IOCTL_SOFPROBE_ACX_RING) {
         WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
         return;
     }
 #ifdef SOFPLAY_INTEGRATED
     if (IoControlCode != IOCTL_SOFPROBE_ACX_STATUS &&
+        IoControlCode != IOCTL_SOFPROBE_ACX_RING &&
         IoControlCode != IOCTL_SOFPROBE_READ_SNAPSHOT &&
         IoControlCode != IOCTL_SOFPROBE_READ_STREAM0) {
         WdfRequestComplete(Request, STATUS_ACCESS_DENIED);
@@ -2919,7 +2941,8 @@ SofProbeEvtIoDeviceControl(
         IoControlCode != IOCTL_SOFPROBE_PREPARE_TONE &&
         IoControlCode != IOCTL_SOFPROBE_RUN_TONE &&
         IoControlCode != IOCTL_SOFPROBE_STOP_TONE &&
-        IoControlCode != IOCTL_SOFPROBE_ACX_STATUS) {
+        IoControlCode != IOCTL_SOFPROBE_ACX_STATUS &&
+        IoControlCode != IOCTL_SOFPROBE_ACX_RING) {
         WdfRequestComplete(Request, STATUS_DEVICE_BUSY);
         return;
     }
@@ -2954,6 +2977,40 @@ SofProbeEvtIoDeviceControl(
         return;
     }
 #ifdef SOFPLAY_INTEGRATED
+    if (IoControlCode == IOCTL_SOFPROBE_ACX_RING) {
+        PSOFPROBE_ACX_RING ring;
+        if (InputBufferLength != 0 || OutputBufferLength < sizeof(*ring)) {
+            WdfRequestComplete(Request, STATUS_BUFFER_TOO_SMALL);
+            return;
+        }
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*ring),
+                                                 (PVOID *)&ring, NULL);
+        if (!NT_SUCCESS(status)) {
+            WdfRequestComplete(Request, status);
+            return;
+        }
+        RtlZeroMemory(ring, sizeof(*ring));
+        WdfSpinLockAcquire(context->AcxBufferLock);
+        if (context->AcxHardwareReady && context->AcxRing != NULL &&
+            context->ToneHda != NULL) {
+            ring->Version = 1;
+            ring->RingBytes = SOFPROBE_TONE_BYTES;
+            ring->LastPacket = context->AcxLastPacket;
+            ring->PacketBytes = context->AcxPacketBytes;
+            ring->HardwarePosition = READ_REGISTER_ULONG((PULONG)(context->ToneHda + 0x164));
+            ring->HardwareStatus = READ_REGISTER_UCHAR(context->ToneHda + 0x163);
+            ring->LinearPositionLow = (ULONG)context->AcxLinearPosition;
+            ring->LinearPositionHigh = (ULONG)(context->AcxLinearPosition >> 32);
+            RtlCopyMemory(ring->Samples, context->AcxRing, sizeof(ring->Samples));
+            status = STATUS_SUCCESS;
+        } else {
+            status = STATUS_DEVICE_NOT_READY;
+        }
+        WdfSpinLockRelease(context->AcxBufferLock);
+        WdfRequestCompleteWithInformation(Request, status,
+                                          NT_SUCCESS(status) ? sizeof(*ring) : 0);
+        return;
+    }
     if (IoControlCode == IOCTL_SOFPROBE_ACX_STATUS) {
         PSOFPROBE_ACX_STATUS acx;
         ULONG position = 0;
@@ -2970,7 +3027,7 @@ SofProbeEvtIoDeviceControl(
             return;
         }
         (VOID)SofProbeAcxGetPosition(device, &position, &streamStatus);
-        acx->Version = 5;
+        acx->Version = 6;
         acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
         acx->StartupCount = context->AcxStartupCount;
         acx->StartupStage = context->AcxStartupStage;
@@ -2982,6 +3039,10 @@ SofProbeEvtIoDeviceControl(
         acx->LatePackets = context->AcxLatePackets;
         acx->MaxAdvanceBytes = context->AcxMaxAdvance;
         acx->PacketBytes = context->AcxPacketBytes;
+        acx->FormatTag = context->AcxFormatTag;
+        acx->ContainerBits = context->AcxContainerBits;
+        acx->ValidBits = context->AcxValidBits;
+        acx->SubFormat = context->AcxSubFormat;
         WdfSpinLockRelease(context->AcxBufferLock);
 
         acx->StreamsCreated = (ULONG)InterlockedCompareExchange(

@@ -51,7 +51,7 @@ typedef int NTSTATUS;
 typedef struct {
     int AcxHardwareReady;
     UCHAR *AcxRing, *ToneHda;
-    ULONG AcxLastPosition, AcxMaxAdvance, AcxLatePackets, AcxPacketBytes;
+    ULONG AcxLastPosition, AcxMaxAdvance, AcxLatePackets, AcxPacketBytes, AcxLastPacket;
     ULONGLONG AcxLinearPosition;
 } CONTEXT, *PSOFPROBE_DEVICE_CONTEXT;
 typedef CONTEXT *WDFDEVICE;

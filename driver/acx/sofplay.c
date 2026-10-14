@@ -22,6 +22,9 @@ EVT_ACX_CIRCUIT_CREATE_STREAM SofPlayEvtCreateStream;
 
 #ifdef SOFPLAY_INTEGRATED
 NTSTATUS SofProbeAcxClaimStream(_In_ WDFDEVICE Device);
+VOID SofProbeAcxRecordFormat(_In_ WDFDEVICE Device, _In_ ULONG Tag,
+                              _In_ ULONG Bits, _In_ ULONG ValidBits,
+                              _In_ ULONG SubFormat);
 VOID SofProbeAcxReleaseStream(_In_ WDFDEVICE Device);
 VOID SofProbeAcxSetTimer(_In_ WDFDEVICE Device, _In_opt_ WDFTIMER Timer);
 VOID SofProbeAcxRecord(_In_ WDFDEVICE Device, _In_ ULONG Event);
@@ -227,12 +230,19 @@ SofPlayEvtCreateStream(_In_ WDFDEVICE Device,
     WDF_TIMER_CONFIG timerConfig;
     ACXSTREAM stream;
     PSOFPLAY_STREAM_CONTEXT context;
+    const WAVEFORMATEXTENSIBLE *wave;
     NTSTATUS status;
 
     UNREFERENCED_PARAMETER(Pin);
     UNREFERENCED_PARAMETER(SignalProcessingMode);
     UNREFERENCED_PARAMETER(VarArguments);
     SofProbeAcxRecord(Device, 5);
+    wave = AcxDataFormatGetWaveFormatExtensible(StreamFormat);
+    if (wave != NULL) {
+        SofProbeAcxRecordFormat(Device, wave->Format.wFormatTag,
+            wave->Format.wBitsPerSample, wave->Samples.wValidBitsPerSample,
+            wave->SubFormat.Data1);
+    }
     if (AcxDataFormatGetSampleRate(StreamFormat) != 48000 ||
         AcxDataFormatGetChannelsCount(StreamFormat) != 2 ||
         AcxDataFormatGetBlockAlign(StreamFormat) != 8) {

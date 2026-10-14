@@ -53,6 +53,20 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x816, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 #define IOCTL_SOFPROBE_ACX_STATUS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x817, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_SOFPROBE_ACX_RING \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x818, METHOD_BUFFERED, FILE_READ_ACCESS)
+
+typedef struct _SOFPROBE_ACX_RING {
+    ULONG Version;
+    ULONG RingBytes;
+    ULONG LastPacket;
+    ULONG PacketBytes;
+    ULONG HardwarePosition;
+    ULONG HardwareStatus;
+    ULONG LinearPositionLow;
+    ULONG LinearPositionHigh;
+    UCHAR Samples[49152];
+} SOFPROBE_ACX_RING, *PSOFPROBE_ACX_RING;
 
 typedef struct _SOFPROBE_ACX_STATUS {
     ULONG Version;
@@ -75,6 +89,10 @@ typedef struct _SOFPROBE_ACX_STATUS {
     ULONG MaxAdvanceBytes;
     ULONG PacketBytes;
     ULONG SpeakerAttenuationCentiDb;
+    ULONG FormatTag;
+    ULONG ContainerBits;
+    ULONG ValidBits;
+    ULONG SubFormat;
 } SOFPROBE_ACX_STATUS, *PSOFPROBE_ACX_STATUS;
 
 typedef struct _SOFPROBE_SNAPSHOT {

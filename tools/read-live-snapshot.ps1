@@ -10,7 +10,7 @@ param([switch]$PulseCore0, [switch]$TestDmaAllocation,
       [switch]$SessionMemory, [switch]$StopSession,
       [string]$IpcHex, [switch]$PrepareTone,
       [switch]$RunTone, [switch]$StopTone,
-      [switch]$AcxStatus)
+      [switch]$AcxStatus, [string]$AcxRingOutput)
 $ErrorActionPreference = 'Stop'
 trap { [Console]::Error.WriteLine($_.ToString()); exit 1 }
 $selected = 0
@@ -37,6 +37,7 @@ if ($PrepareTone) { $selected++ }
 if ($RunTone) { $selected++ }
 if ($StopTone) { $selected++ }
 if ($AcxStatus) { $selected++ }
+if ($AcxRingOutput) { $selected++ }
 if ($selected -gt 1) { throw 'Select only one diagnostic command' }
 $source = @'
 using System;
@@ -66,7 +67,7 @@ public static class SofProbeClient {
     public static uint[] Exchange(string path, uint code, byte[] input) {
         using (SafeFileHandle handle = CreateFileW(path, (code == 0x22A004U || code == 0x22A00CU || code == 0x22A014U || code == 0x22A01CU || code == 0x22A024U || code == 0x22A028U || code == 0x22A02CU || code == 0x22A030U || code == 0x22A034U || code == 0x22A038U || code == 0x22A03CU || code == 0x22A040U || code == 0x22A044U || code == 0x22A048U || code == 0x22A04CU || code == 0x22A050U || code == 0x22A054U || code == 0x22A058U) ? 0x40000000 : 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytes = new byte[code == 0x22605CU ? 128 : ((code == 0x22A050U || code == 0x22A054U || code == 0x22A058U) ? 44 : ((code == 0x22A044U || code == 0x22A04CU) ? 412 : (code == 0x22A040U ? 720 : (code == 0x22A048U ? 24 : (code == 0x22A03CU ? 716 : (code == 0x22A038U ? 312 : (code == 0x22A034U ? 300 : (code == 0x22A030U ? 192 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))))))))))];
+            byte[] bytes = new byte[code == 0x226060U ? 49184 : code == 0x22605CU ? 128 : ((code == 0x22A050U || code == 0x22A054U || code == 0x22A058U) ? 44 : ((code == 0x22A044U || code == 0x22A04CU) ? 412 : (code == 0x22A040U ? 720 : (code == 0x22A048U ? 24 : (code == 0x22A03CU ? 716 : (code == 0x22A038U ? 312 : (code == 0x22A034U ? 300 : (code == 0x22A030U ? 192 : (code == 0x22A02CU ? 152 : (code == 0x22A028U ? 96 : (code == 0x22A024U ? 80 : ((code == 0x22A014U || code == 0x226018U || code == 0x22A01CU) ? 64 : 32))))))))))))];
             uint returned;
             bool ok = input == null
                 ? DeviceIoControl(handle, code, IntPtr.Zero, 0, bytes, (uint)bytes.Length, out returned, IntPtr.Zero)
@@ -87,7 +88,7 @@ public static class SofProbeClient {
 Add-Type -TypeDefinition $source
 $paths = @( [SofProbeClient]::Paths() )
 if ($paths.Count -ne 1) { throw "Expected one active SOF probe interface; got $($paths.Count): $($paths -join ', ')" }
-$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } elseif ($ReadBootPreflight) { [uint32]0x226018 } elseif ($TestCaptureSetup) { [uint32]0x22A01C } elseif ($ReadPciConfig) { [uint32]0x226020 } elseif ($TestCaptureDma) { [uint32]0x22A024 } elseif ($TestRomEntry) { [uint32]0x22A028 } elseif ($TestFirmwareDma) { [uint32]0x22A02C } elseif ($TestIpc3Ready) { [uint32]0x22A030 } elseif ($ReadIpc3Info) { [uint32]0x22A034 } elseif ($AckIpc3Ready) { [uint32]0x22A038 } elseif ($QueryIpc3Memory) { [uint32]0x22A03C } elseif ($StartSession) { [uint32]0x22A040 } elseif ($SessionMemory) { [uint32]0x22A044 } elseif ($StopSession) { [uint32]0x22A048 } elseif ($IpcHex) { [uint32]0x22A04C } elseif ($PrepareTone) { [uint32]0x22A050 } elseif ($RunTone) { [uint32]0x22A054 } elseif ($StopTone) { [uint32]0x22A058 } elseif ($AcxStatus) { [uint32]0x22605C } else { [uint32]0x226000 }
+$code = if ($PulseCore0) { [uint32]0x22A004 } elseif ($TestDmaAllocation) { [uint32]0x226008 } elseif ($StageFirmware) { [uint32]0x22A00C } elseif ($ReadStream0) { [uint32]0x226010 } elseif ($TestStreamSetup) { [uint32]0x22A014 } elseif ($ReadBootPreflight) { [uint32]0x226018 } elseif ($TestCaptureSetup) { [uint32]0x22A01C } elseif ($ReadPciConfig) { [uint32]0x226020 } elseif ($TestCaptureDma) { [uint32]0x22A024 } elseif ($TestRomEntry) { [uint32]0x22A028 } elseif ($TestFirmwareDma) { [uint32]0x22A02C } elseif ($TestIpc3Ready) { [uint32]0x22A030 } elseif ($ReadIpc3Info) { [uint32]0x22A034 } elseif ($AckIpc3Ready) { [uint32]0x22A038 } elseif ($QueryIpc3Memory) { [uint32]0x22A03C } elseif ($StartSession) { [uint32]0x22A040 } elseif ($SessionMemory) { [uint32]0x22A044 } elseif ($StopSession) { [uint32]0x22A048 } elseif ($IpcHex) { [uint32]0x22A04C } elseif ($PrepareTone) { [uint32]0x22A050 } elseif ($RunTone) { [uint32]0x22A054 } elseif ($StopTone) { [uint32]0x22A058 } elseif ($AcxRingOutput) { [uint32]0x226060 } elseif ($AcxStatus) { [uint32]0x22605C } else { [uint32]0x226000 }
 $inputBytes = $null
 if ($StageFirmware) {
     $expectedHash = '8433390E4ABFE40B251FF3DEC41604E7B817501D1097D51AA2F51C11444D3BF0'
@@ -126,7 +127,18 @@ if ($ReadStream0) {
     } | Format-List
     return
 }
-if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -in @(2,3,4,5))) { throw "Unsupported snapshot version: $($values[0])" }
+if ($AcxRingOutput) {
+    if ($values.Length -ne 12296 -or $values[0] -ne 1 -or $values[1] -ne 49152) {
+        throw 'Unexpected ring snapshot layout'
+    }
+    $bytes = [byte[]]::new($values.Length * 4)
+    [Buffer]::BlockCopy($values, 0, $bytes, 0, $bytes.Length)
+    [IO.File]::WriteAllBytes($AcxRingOutput, $bytes)
+    [pscustomobject]@{ RingBytes=$values[1]; LastPacket=$values[2]; PacketBytes=$values[3];
+        HardwarePosition=$values[4]; HardwareStatus=$values[5]; Output=$AcxRingOutput } | Format-List
+    return
+}
+if ($values[0] -ne 1 -and !($AcxStatus -and $values[0] -in @(2,3,4,5,6))) { throw "Unsupported snapshot version: $($values[0])" }
 if ($AcxStatus) {
     [pscustomobject]@{
         StreamsCreated = $values[1]
@@ -147,6 +159,10 @@ if ($AcxStatus) {
         LatePackets = if ($values[0] -ge 4) { $values[16] } else { $null }
         MaxAdvanceBytes = if ($values[0] -ge 4) { $values[17] } else { $null }
         PacketBytes = if ($values[0] -ge 4) { $values[18] } else { $null }
+        FormatTag = if ($values[0] -ge 6) { $values[20] } else { $null }
+        ContainerBits = if ($values[0] -ge 6) { $values[21] } else { $null }
+        ValidBits = if ($values[0] -ge 6) { $values[22] } else { $null }
+        SubFormat = if ($values[0] -ge 6) { $values[23] } else { $null }
         SpeakerAttenuationDb = if ($values[0] -ge 5) { $values[19] / 100.0 } else { $null }
     } | Format-List
     return
