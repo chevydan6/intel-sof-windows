@@ -274,3 +274,28 @@ shutdown verification, and headphone-only normal playback. Further powered
 steps depend on the recorded result and physical temperature feedback; this
 is not approval for unattended continuous speaker playback. No thermal safety
 or clean musical playback is established by a short sine recording.
+
+The same-level left pulse (`7e3c4ec`, -18.06 dBFS) completed with flags `0xF03`,
+full capture, exactly one amplifier enable and verified shutdown without faults.
+Its Lenovo 1 kHz components near the expected pulse time were -71.09/-75.54
+dBFS, comparable to that recording's background. The Ubuntu recording did not
+provide a reliable left-tone measurement. The signal-to-noise ratio is too low
+for a useful distortion estimate; an unconstrained search selected unrelated
+sounds outside the pulse window, so those fits were rejected. This result does
+not establish left-speaker failure. Temperature feedback after this pulse is
+still pending.
+
+An Ubuntu recording check identified a capture-start transient during the first
+second. After it settled, volume 0.10 with 32-bit recording gave nonzero useful
+samples without clipping. Subsequent recording starts allow three seconds to
+settle before requesting the diagnostic, and analysis excludes startup. The
+previous low-volume 16-bit left capture had extensive quantization to zero.
+External dBFS values at these different gain settings are not directly comparable.
+
+Source `9943b70` passed build 38543198966 and installed as `oem51.inf`, version
+`9.33.36.555`. Its amplifier-off right test completed with flags `0xC02`, full
+capture, zero status/cleanup errors, zero enable writes, and verified shutdown.
+The independent Ubuntu capture had no clipping after its first second, with
+settled peaks below 0.0022 full scale. Normal headphone services and the original
+Ubuntu microphone volume were restored. The new -15.10 dBFS powered pulse has
+not been issued; it awaits temperature feedback after the preceding left pulse.
