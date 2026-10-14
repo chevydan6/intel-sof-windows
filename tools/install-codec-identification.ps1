@@ -11,7 +11,8 @@ function Assert-Hold {
  $paths = @([SofProbeClient]::Paths())
  if ($paths.Count -ne 1) { throw 'Expected one maintenance interface' }
  $v = [SofProbeClient]::Exchange($paths[0],0x22605C,$null)
- if ($v.Length -lt 25 -or $v[0] -ne 7 -or $v[11] -ne 7 -or $v[13] -ne 0 -or $v[24] -ne 1 -or $v[2] -ne 0) { throw 'Playback hold verification failed' }
+ if ($v.Length -lt 25 -or $v[0] -notin @(7,8) -or $v[11] -ne 7 -or $v[13] -ne 0 -or $v[24] -ne 1 -or $v[2] -ne 0) { throw 'Playback hold verification failed' }
+ if ($v[0] -eq 8 -and ($v.Length -lt 26 -or $v[25] -ne 1)) { throw 'Expected isolated headphone transport' }
  $s = [SofProbeClient]::Exchange($paths[0],0x226010,$null)
  if (($s[0] -band 2) -ne 0) { throw 'Unexpected HDA DMA RUN bit' }
  $d = [SofProbeClient]::Exchange($paths[0],0x226000,$null)

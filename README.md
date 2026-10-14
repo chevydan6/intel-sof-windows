@@ -3,13 +3,20 @@
 Open-source Windows host-driver development for Intel Sound Open Firmware (SOF).
 The first target is an Intel N100 laptop with a PCI audio controller at
 `8086:54c8` and an I2C Realtek RT5682 codec (`ACPI\10EC5682`). This repository
-contains diagnostic tooling and an experimental ACX speaker driver. A controlled
-Windows WAV playback test completed audio packets through the hardware DMA path.
-The driver now loads the verified firmware and prepares the speaker automatically.
-Three consecutive Windows WAV transfers passed before and after a full reboot,
-without the preparation harness.
-This is **still a development driver**; full power recovery and other audio routes
-remain unfinished. See the [automatic startup tests](docs/n100-acx-autostart-test.md).
+contains diagnostic tooling and experimental ACX audio drivers.
+
+**Speaker playback is currently disabled after reported speaker heating and
+distortion.** The shutdown-only amplifier driver requests EN low; this is not a
+measurement of temperature or proof that the hardware fault is resolved. See the
+[thermal investigation](docs/n100-amplifier-thermal-review.md).
+
+Headphone work uses a separate SSP0 transport and an RT5682 I2C driver. Codec
+identification, muted calibration, and shutdown have been verified on the target.
+Muted headphone streaming passed, and a bounded three-second headphone tone
+was captured by a separate Ubuntu microphone. Normal continuous playback and
+jack handling remain unfinished; the endpoint is left muted after each test. See [headphone bring-up](docs/n100-headphone-bringup.md).
+Earlier successful speaker DMA tests are historical evidence, not a statement
+that the current build enables speakers. General power recovery remains unfinished.
 
 The development probe builds with the WDK in Windows CI and its generated INF
 passes a separate x64 `InfVerif /w` check. It read the controller's resources,

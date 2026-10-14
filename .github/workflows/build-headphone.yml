@@ -12,6 +12,7 @@ on:
       - 'tools/test-acx-ring.py'
       - 'tools/test-amp-hold.py'
       - 'tools/test-headphone-pipeline.py'
+      - 'tools/test-pcm-guard.py'
       - '.github/workflows/build-headphone.yml'
   workflow_dispatch:
 
@@ -27,6 +28,7 @@ jobs:
       - run: python3 tools/test-acx-ring.py
       - run: python3 tools/test-amp-hold.py
       - run: python3 tools/test-headphone-pipeline.py
+      - run: python3 tools/test-pcm-guard.py
   build:
     runs-on: windows-2022
     steps:

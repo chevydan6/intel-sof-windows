@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Bounded Windows playback test with RT5682 hardware mutes asserted throughout.
-param([switch]$Player)
+param([switch]$Player, [switch]$Audition)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$wav = Join-Path $root 'muted-test.wav'
+$wav = Join-Path $root 'headphone-test.wav'
 if ($Player) {
  $p = [System.Media.SoundPlayer]::new($wav)
  try { $p.PlaySync() } finally { $p.Dispose() }
@@ -23,21 +23,30 @@ function Read-Transport {
  return ,$v
 }
 $failure = $null
-Start-Transcript -Path (Join-Path $root 'muted-test.log') -Force | Out-Null
+Start-Transcript -Path (Join-Path $root $(if ($Audition) {'audition-test.log'} else {'muted-test.log'})) -Force | Out-Null
 try {
  . (Join-Path $root 'read-live-snapshot.ps1') -AcxStatus | Out-Host
  Assert-AmpOff
  & (Join-Path $root 'read-headphone-codec.ps1') | Format-List
  $before = Read-Transport
- # Quiet source for a transport-only test: silence is sufficient for DMA progress.
+ # Muted default: silent 3-second stream. Explicit audition: 8-second tone,
+ # with only a kernel-bounded 3-second physical output window.
+ $dataBytes = if ($Audition) {1536000} else {576000}
  $stream = [IO.File]::Create($wav)
  try {
   $w = [IO.BinaryWriter]::new($stream)
-  $w.Write([Text.Encoding]::ASCII.GetBytes('RIFF')); $w.Write([uint32](36+576000))
+  $w.Write([Text.Encoding]::ASCII.GetBytes('RIFF')); $w.Write([uint32](36+$dataBytes))
   $w.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt ')); $w.Write([uint32]16)
   $w.Write([uint16]1); $w.Write([uint16]2); $w.Write([uint32]48000); $w.Write([uint32]192000)
   $w.Write([uint16]4); $w.Write([uint16]16); $w.Write([Text.Encoding]::ASCII.GetBytes('data'))
-  $w.Write([uint32]576000); $w.Write([byte[]]::new(576000)); $w.Flush()
+  $w.Write([uint32]$dataBytes)
+  if ($Audition) {
+   for ($i=0;$i -lt $dataBytes/4;$i++) {
+    $sample=[int16]([Math]::Round([Math]::Sin(2*[Math]::PI*1000*$i/48000)*16384))
+    $w.Write($sample);$w.Write($sample)
+   }
+  } else { $w.Write([byte[]]::new($dataBytes)) }
+  $w.Flush()
  } finally { $stream.Dispose() }
  Start-Service AudioEndpointBuilder
  Start-Service Audiosrv
@@ -47,6 +56,21 @@ try {
  Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Settings $settings -Force | Out-Null
  $started = Get-Date
  Start-ScheduledTask -TaskName $task
+ if ($Audition) {
+  $ready = $false
+  for ($i=0;$i -lt 40;$i++) {
+   Start-Sleep -Milliseconds 100
+   $live = Read-Transport
+   if ($live[13] -eq 1 -and $live[2] -gt $before[2] -and $live[4]-$before[4] -ge 50) { $ready=$true;break }
+  }
+  if (!$ready) { throw 'No active headphone stream; refusing audition' }
+  Assert-AmpOff
+  $pre = & (Join-Path $root 'read-headphone-codec.ps1')
+  if ($pre.Prepared -ne 1) { throw 'Codec is not prepared; refusing audition' }
+  Write-Host 'Starting fixed low-gain headphone audition; automatic mute and power-down follows.'
+  & (Join-Path $root 'read-headphone-codec.ps1') -Audition | Format-List
+  Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\10EC5682\0\Device Parameters' | Select-Object CodecAuditionStage,CodecAuditionStatus | Format-List
+ }
  $finished = $false
  for ($i=0;$i -lt 30;$i++) {
   Start-Sleep -Seconds 1
@@ -58,15 +82,16 @@ try {
  $after = Read-Transport
  $after | ConvertTo-Json -Compress | Write-Host
  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'read-live-snapshot.ps1') -AcxStatus
- Get-ItemProperty -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\$parent\Device Parameters" | Select-Object SofPlayBootResult,SofPlayIpcCommand,SofPlayIpcComponent,SofPlayIpcStatus,SofPlayIpcResult,SofPlayIpcReplyError | Format-List
+ if ($after[12] -ne 0) { Get-ItemProperty -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\$parent\Device Parameters" | Select-Object SofPlayBootResult,SofPlayIpcCommand,SofPlayIpcComponent,SofPlayIpcStatus,SofPlayIpcResult,SofPlayIpcReplyError | Format-List }
  $codec = & (Join-Path $root 'read-headphone-codec.ps1')
  $codec | Format-List
  Assert-AmpOff
- if ($after[13] -ne 1 -or $after[11] -ne 6 -or $after[12] -ne 0 -or $after[2] -lt 1 -or $after[3]-$before[3] -lt 250 -or $after[4]-$before[4] -lt 250 -or $codec.Prepared -ne 1) { throw 'Muted transport progress not verified' }
- Write-Host 'PASS: muted headphone stream advanced at least 250 packets; this does not verify audible output.'
+ if ($after[13] -ne 1 -or $after[11] -ne 6 -or $after[12] -ne 0 -or $after[2] -lt 1 -or $after[3]-$before[3] -lt 250 -or $after[4]-$before[4] -lt 250 -or (!$Audition -and $codec.Prepared -ne 1) -or ($Audition -and $codec.Prepared -ne 0)) { throw 'Muted transport progress not verified' }
+ Write-Host 'PASS: headphone test and packet progress completed; audible confirmation is separate.'
 } catch {
  $failure = $_
  Write-Host "FAILED: $_"
+ Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\10EC5682\0\Device Parameters' | Select-Object CodecAuditionStage,CodecAuditionStatus | Format-List
 } finally {
  Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
  Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue

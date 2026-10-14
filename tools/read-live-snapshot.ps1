@@ -165,7 +165,8 @@ if ($AcxStatus) {
         SubFormat = if ($values[0] -ge 6) { $values[23] } else { $null }
         ThermalHold = if ($values[0] -ge 7) { $values[24] } else { $null }
         HeadphoneOnly = if ($values[0] -ge 8) { $values[25] } else { 0 }
-        SpeakerAttenuationDb = if ($values[0] -ge 5) { $values[19] / 100.0 } else { $null }
+        SpeakerAttenuationDb = if ($values[0] -ge 5 -and !($values[0] -ge 8 -and $values[25] -eq 1)) { $values[19] / 100.0 } else { $null }
+        HeadphonePcmAttenuationDb = if ($values[0] -ge 8 -and $values[25] -eq 1) { 20 * [Math]::Log10(16) } else { $null }
     } | Format-List
     return
 }
