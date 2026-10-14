@@ -253,4 +253,35 @@ The desktop test has a bounded 60-second task limit to allow setup, thirty
 seconds of playback and shutdown. It now requires the recorded stop reason to
 be the deadline, so an early pause cannot masquerade as a full-duration pass.
 The new mode requires a dry hardware run before a recorded powered run.
-Hardware validation of this mode is pending.
+Source `9629594` passed all four CI workflows, including WDK builds and INF
+validation. ACX run `38586715180` built all three preview variants; amplifier
+run `38586715226` tested both extended caps, authorization, ownership, missed
+renewals and shutdown failures. The 30-second parent installed as oem64.inf,
+15.8.49.201; amplifier oem63.inf, 15.8.52.617. PowerShell helpers parsed on the
+Windows target. Application attempts to enable every amplifier mode or renew
+were rejected without enabling output.
+
+The first dry application run reached its deadline at 30000 ms after 937 timer
+callbacks, with 186 valid ring-boundary observations, no late packets, no
+preview error and zero amplifier enables. All captured left samples were zero;
+4,879 right samples were nonzero, with peak 428,771,544.
+
+One powered run at unchanged gain reached the deadline at 30004 ms, also after
+937 callbacks. It exercised 191 boundary observations without error, had zero
+late packets, exactly one amplifier enable and a verified off state afterward.
+No watchdog or amplifier fault occurred. Captured PCM had 4,176 nonzero right
+samples, peak 437,512,070, and no nonzero left samples. These software timer
+measurements do not establish an exact hardware cutoff or thermal limit.
+
+The private 44.224-second Ubuntu recording matched the 30-second source at
+7.580 seconds (normalized correlation 0.407). Neither microphone channel
+clipped after the startup interval. Acoustic capture verifies the melody was
+emitted; listening quality and speaker temperature still require the user's
+feedback. That feedback is pending for this test. Raw recordings, ring data,
+and detailed logs stay under ignored `build/speaker-repair/preview-30-9629594/`.
+
+After the test the parent was returned to the corrected `4b0304c` headphone-only
+package (oem60.inf, 13.28.13.565). Both Windows audio services were restarted.
+The amplifier was ready and off with no fault; no preview scheduled task
+remained, and the Windows boot time was unchanged. The 30-second speaker mode
+is a separate diagnostic package, not normal sustained speaker playback.
