@@ -62,3 +62,18 @@ The laptop therefore retains TESTSIGNING=Yes to preserve working audio.
 Microsoft references:
 - https://learn.microsoft.com/en-us/windows-hardware/drivers/dashboard/driver-signing-offerings
 - https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option
+
+
+## Boot-policy experiment on the owner's laptop
+
+On 2026-10-15 the owner authorized a reboot test with TESTSIGNING=No and
+NOINTEGRITYCHECKS=Yes in a separate boot entry. Secure Boot and VBS were
+already off. Windows 11 build 26300.9711 still blocked sofplay and sofrt5682;
+the audio parent reported Code 52 and Code Integrity event 3004 named the
+binaries. NOINTEGRITYCHECKS was therefore insufficient on this machine.
+
+The original boot entry was restored and the trial entry removed. Final
+verification showed TESTSIGNING=Yes, no NOINTEGRITYCHECKS setting, and audio,
+amplifier, codec and keyboard devices all OK. The installed audio driver
+remains the owner's 0 dB right-only version. The public stereo package was
+not installed. No kernel patches or integrity-policy removal were attempted.
