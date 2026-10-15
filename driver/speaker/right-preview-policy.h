@@ -12,8 +12,8 @@
 #endif
 #define SOF_RIGHT_PREVIEW_GAP_MS 80ULL
 #ifdef SOFPLAY_RIGHT_TRIAL
-// PUJJOTEEN board speaker ceiling: -9 dB (11626/32768).
-#define SOF_RIGHT_PREVIEW_PEAK 761921535L
+// User-requested trial level: -6 dB (16423/32768), +3 dB over board curve.
+#define SOF_RIGHT_PREVIEW_PEAK 1076297727L
 #else
 #define SOF_RIGHT_PREVIEW_PEAK 536870911L
 #endif
@@ -26,7 +26,7 @@ static __inline LONG SofRightPreviewSample(SOF_RIGHT_FILTER *filter, LONG left, 
     // Mono preserves content from either application channel; the physical
     // left slot is always zero. Widen before summing and scaling.
 #ifdef SOFPLAY_RIGHT_TRIAL
-    LONG input = (LONG)((((LONGLONG)left + right) * 11626) / 65536);
+    LONG input = (LONG)((((LONGLONG)left + right) * 16423) / 65536);
 #else
     LONG input = (LONG)(((LONGLONG)left + right) / 8);
 #endif

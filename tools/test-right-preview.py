@@ -212,9 +212,9 @@ int main(void) {
     // Verify the initial gain separately from the DC blocker's decay.
     SOF_RIGHT_FILTER gainFilter={0};
 #ifdef SOFPLAY_RIGHT_TRIAL
-    assert(SofRightPreviewSample(&gainFilter,INT32_MAX,INT32_MAX)==761921535);
+    assert(SofRightPreviewSample(&gainFilter,INT32_MAX,INT32_MAX)==1076297727);
     memset(&gainFilter,0,sizeof(gainFilter));
-    assert(SofRightPreviewSample(&gainFilter,INT32_MIN,INT32_MIN)==-761921535);
+    assert(SofRightPreviewSample(&gainFilter,INT32_MIN,INT32_MIN)==-1076297727);
 #else
     assert(SofRightPreviewSample(&gainFilter,INT32_MAX,INT32_MAX)==536870911);
 #endif
