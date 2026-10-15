@@ -76,4 +76,12 @@ conversion now uses `(left + right) * 11626 / 65536`, with symmetric ceiling
 -9 dB maximum; it does not boost above that board setting. Earlier bounded
 preview modes keep their original -12.04 dB setting and now report it accurately.
 The left slot, DC filter, idle gate, fault latch and amplifier watchdog remain.
-New-package build and listening verification are pending.
+Source `7e88d73` passed the conversion/ring checks and all three affected CI
+workflows. ACX run `38665550530` built and validated the trial package, installed
+as oem68.inf, 1.25.34.637. Both audio services resumed, endpoint volume remained
+0 dB/unmuted, and ordinary playback resumed with no preview or amplifier fault.
+Four live ring captures had only zero left samples, 3,072 nonzero right samples,
+a right peak of 108,964,238 and no hits at the new ceiling. These snapshots are
+not an acoustic loudness comparison. User feedback on the increased level is
+pending. Windows was not rebooted; the existing read-only trial monitor remained
+active. Evidence is private under `build/speaker-repair/right-trial-gain-7e88d73/`.
