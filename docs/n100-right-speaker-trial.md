@@ -82,6 +82,31 @@ as oem68.inf, 1.25.34.637. Both audio services resumed, endpoint volume remained
 0 dB/unmuted, and ordinary playback resumed with no preview or amplifier fault.
 Four live ring captures had only zero left samples, 3,072 nonzero right samples,
 a right peak of 108,964,238 and no hits at the new ceiling. These snapshots are
-not an acoustic loudness comparison. User feedback on the increased level is
-pending. Windows was not rebooted; the existing read-only trial monitor remained
+not an acoustic loudness comparison. The user subsequently reported no audible
+increase and confirmed playback continued. Windows was not rebooted; the existing read-only trial monitor remained
 active. Evidence is private under `build/speaker-repair/right-trial-gain-7e88d73/`.
+
+### Follow-up signal inspection
+
+Read-only inspection in the signed-in desktop session found Chrome's active
+audio session at scalar 1.0 and unmuted. The endpoint had already been verified
+at 0 dB and unmuted. `tools/read-app-audio-levels.ps1` enumerates these Core Audio
+session controls; running it through SSH alone can miss desktop applications.
+
+A six-second software loopback capture was matched to nine overlapping hardware
+DMA ring snapshots. After applying the driver's DC filter to the captured input,
+each matched segment had correlation 1.000000 and measured gain 0.354797
+(-9.000 dB). Earlier snapshots preceding the loopback capture were excluded.
+Input left/right correlation was 0.996138, so this content was not cancelled by
+stereo averaging. This verifies the installed conversion into the DMA ring;
+it does not measure the amplifier output or acoustic loudness. Private evidence
+and calculated results are under `build/speaker-repair/quiet-playback/`.
+
+The configured DSP graph connects host, buffer and DAI directly, without a
+volume component. The [MAX98360 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/max98360a-max98360d.pdf)
+specifies pin-selected I2S gain; the exposed ACPI amplifier GPIO controls enable,
+not gain. No additional programmable amplifier-volume setting was identified.
+The low-volume complaint remains unresolved. No further gain change, driver
+restart, service stop or reboot occurred during this inspection. Current
+speaker temperature and a comparable Fedora/ChromeOS loudness observation are
+still needed before deciding whether to increase speaker drive further.
