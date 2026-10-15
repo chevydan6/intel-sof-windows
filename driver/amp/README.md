@@ -76,3 +76,11 @@ References: [Linux MAX98357A/MAX98360A lifecycle](https://github.com/torvalds/li
 [GPIO write contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/gpio/ni-gpio-ioctl_gpio_write_pins),
 [requestor-mode check](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdfrequest/nf-wdfrequest-wdfrequestgetrequestormode),
 [WDF timers](https://learn.microsoft.com/en-us/windows-hardware/drivers/wdf/using-timers).
+
+The separate kernel-only START_STREAM command has no total duration cap, but
+still expires unless its exclusive owner renews within 100 ms. QUERY_STREAM
+advertises this capability with MaximumMs=0; legacy commands keep their caps.
+Ownership, user-mode rejection, default-off, fault latching, GPIO failure
+handling, file cleanup and D0 exit behavior are shared with bounded modes.
+A lost renewal still forces off; this is a software watchdog, not temperature
+measurement or a hardware energy limit.

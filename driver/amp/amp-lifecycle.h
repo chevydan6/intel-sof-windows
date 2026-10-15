@@ -58,7 +58,7 @@ static NTSTATUS SofAmpStateStartBounded(SOFAMP_STATE *s, PVOID io, PVOID owner, 
     NTSTATUS status;
     ULONGLONG now;
     if (maximumMs != SOFAMP_MAXIMUM_MS && maximumMs != SOFAMP_LISTEN_MAXIMUM_MS &&
-        maximumMs != SOFAMP_PREVIEW_MAXIMUM_MS && maximumMs != SOFAMP_PREVIEW_30_MAXIMUM_MS)
+        maximumMs != SOFAMP_PREVIEW_MAXIMUM_MS && maximumMs != SOFAMP_PREVIEW_30_MAXIMUM_MS && maximumMs != 0)
         return STATUS_INVALID_PARAMETER;
     if (!s->Ready || s->Faulted) return STATUS_DEVICE_NOT_READY;
     if (owner == NULL) return STATUS_INVALID_PARAMETER;
@@ -70,7 +70,7 @@ static NTSTATUS SofAmpStateStartBounded(SOFAMP_STATE *s, PVOID io, PVOID owner, 
     now = SofAmpNowMs();
     s->Owner = owner;
     s->Deadline = now + SOFAMP_LEASE_MS;
-    s->MaximumDeadline = now + maximumMs;
+    s->MaximumDeadline = maximumMs ? now + maximumMs : ~(ULONGLONG)0;
     s->OutputRequest = SOFAMP_OUTPUT_UNKNOWN;
     status = SofAmpDriveRaw(io, 1);
     if (!NT_SUCCESS(status)) {

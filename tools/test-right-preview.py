@@ -35,6 +35,7 @@ typedef unsigned char UCHAR;
 typedef int BOOLEAN;
 typedef void VOID;
 #define FALSE 0
+#define TRUE 1
 #define STATUS_SUCCESS 0
 #define STATUS_INVALID_DEVICE_STATE (-1)
 #define STATUS_IO_TIMEOUT (-2)
@@ -50,6 +51,8 @@ typedef void VOID;
 #define IOCTL_SOFAMP_QUERY 6
 #define IOCTL_SOFAMP_START_PREVIEW_30 7
 #define IOCTL_SOFAMP_QUERY_PREVIEW_30 8
+#define IOCTL_SOFAMP_START_STREAM 9
+#define IOCTL_SOFAMP_QUERY_STREAM 10
 /* PREVIEW_AMP_MODES */
 #define WDF_REL_TIMEOUT_IN_MS(x) (x)
 #define RtlCopyMemory memcpy
@@ -67,7 +70,7 @@ typedef struct Context {
     UCHAR *AcxRing;
     ULONGLONG AcxLinearPosition;
     BOOLEAN ToneTriggerActive, ToneDmaRunning;
-} Context, *PSOFPROBE_DEVICE_CONTEXT, *WDFTIMER;
+} Context, *PSOFPROBE_DEVICE_CONTEXT, *WDFTIMER, *WDFDEVICE;
 static Context *current;
 static ULONGLONG clockMs;
 static int powerLock, spinLock, starts, renews, stops, timerStarts, timerStops;
@@ -108,10 +111,15 @@ c += function(probe, 'SofRightPreviewCopy') + '\n'
 c += function(source, 'SofRightPreviewStop') + '\n'
 c += function(source, 'SofRightPreviewBegin') + '\n'
 c += function(source, 'SofRightPreviewTick') + '\n'
+c += '\n#ifdef SOFPLAY_RIGHT_TRIAL\nstatic NTSTATUS SofRightPreviewOpen(WDFDEVICE d) { d->PreviewAmp=(void*)1; return 0; }\n'
+c += function(source, 'SofRightTrialArmLocked') + '\n#endif\n'
 c += r'''
 static LONG ring[SOFPROBE_TONE_BYTES/4];
 static Context reset(int powered) {
     memset(ring,0,sizeof(ring));
+#ifdef SOFPLAY_RIGHT_TRIAL
+    ring[1]=1024;
+#endif
     clockMs=100; starts=renews=stops=timerStarts=timerStops=0;
     powerLock=spinLock=ampOn=failCommand=badDma=0;
     Context c={0}; c.Preview.Phase=1; c.Preview.Powered=powered;
@@ -127,7 +135,9 @@ static void tick(Context *c, unsigned elapsed, unsigned advance) {
     SofRightPreviewTick(c); assert(!powerLock && !spinLock);
 }
 int main(void) {
-    Context c=reset(1); begin(&c);
+    Context c;
+#ifndef SOFPLAY_RIGHT_TRIAL
+    c=reset(1); begin(&c);
     tick(&c,20,7680); assert(starts==1 && ampOn && c.Preview.Phase==3);
     tick(&c,20,7680); assert(renews==1);
     for(unsigned i=0;i<SOF_RIGHT_PREVIEW_MS/20-2;i++) tick(&c,20,7680);
@@ -138,10 +148,37 @@ int main(void) {
     powerLock=1; assert(SofRightPreviewBegin(&c)==STATUS_INVALID_DEVICE_STATE); powerLock=0;
     c=reset(0); begin(&c); for(unsigned i=0;i<SOF_RIGHT_PREVIEW_MS/20;i++) tick(&c,20,7680);
     assert(!starts && !renews && !ampOn && c.Preview.Phase==4);
+#else
+    c=reset(1); begin(&c);
+    // Stream renewal passes the former 30-second ceiling without re-enabling.
+    for(unsigned i=0;i<6000;i++) tick(&c,20,7680);
+    assert(c.Preview.Phase==3 && ampOn && starts==1 && !c.Preview.Error);
+    // Silent-but-running stream shuts off, then resumes once data returns.
+    ring[1]=0;
+    for(unsigned i=0;i<13;i++) tick(&c,20,7680);
+    assert(!ampOn && c.Preview.Phase==3 && !c.Preview.Error);
+    ring[1]=1024;tick(&c,20,7680);assert(ampOn && starts==2);
+    powerLock=1;SofRightPreviewStop(&c,STATUS_SUCCESS);
+    assert(!ampOn && SofRightTrialArmLocked(&c)==0 && c.Preview.Phase==1);
+    powerLock=0;begin(&c);ring[1]=1024;tick(&c,20,7680);assert(ampOn && starts==3);
+    tick(&c,80,7680);assert(!ampOn && c.Preview.Error);
+    powerLock=1;assert(SofRightTrialArmLocked(&c)!=0);powerLock=0;
+    // Query failure blocks automatic arming and latches the fault.
+    c=reset(1);c.Preview.Phase=4;failCommand=SOF_RIGHT_AMP_QUERY;
+    powerLock=1;assert(SofRightTrialArmLocked(&c)!=0 && c.Preview.Error);powerLock=0;
+    // Pure silence never enables. Dry build/data flow cannot enable either.
+    c=reset(1);ring[1]=0;begin(&c);
+    for(unsigned i=0;i<100;i++) tick(&c,20,7680);
+    assert(!ampOn && !starts && c.Preview.Phase==3);
+    c=reset(0);begin(&c);for(unsigned i=0;i<6000;i++) tick(&c,20,7680);
+    assert(!ampOn && !starts && c.Preview.Phase==3);
+#endif
     // Late first callback must never enable the amp.
     c=reset(1); begin(&c); tick(&c,80,7680); assert(!starts && stops==1 && c.Preview.Error);
     assert(c.PreviewDiagnostics.Reason==SofRightLateTick && c.PreviewDiagnostics.GapMs==80);
+#ifndef SOFPLAY_RIGHT_TRIAL
     c=reset(1); begin(&c); tick(&c,SOF_RIGHT_PREVIEW_MS,7680); assert(!starts && stops==1);
+#endif
     // A DMA stall, error, channel corruption, or excess amplitude shuts off.
     for(int fault=0;fault<6;fault++) {
         c=reset(1); begin(&c); tick(&c,20,7680); assert(ampOn);
@@ -195,9 +232,9 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory(prefix='sof-right-preview-') as td:
     p = Path(td)
-    modes=source[source.index('#if defined(SOFPLAY_RIGHT_PREVIEW_30)'):source.index('#endif')+6]
+    modes=source[source.index('#if defined(SOFPLAY_RIGHT_TRIAL)'):source.index('#endif')+6]
     (p/'test.c').write_text(c.replace('/* PREVIEW_AMP_MODES */',modes))
-    for flags in ([], ['-DSOFPLAY_RIGHT_PREVIEW_LONG=1'], ['-DSOFPLAY_RIGHT_PREVIEW_30=1']):
+    for flags in ([], ['-DSOFPLAY_RIGHT_PREVIEW_LONG=1'], ['-DSOFPLAY_RIGHT_PREVIEW_30=1'], ['-DSOFPLAY_RIGHT_TRIAL=1']):
       subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',*flags,
                     '-fsanitize=address,undefined','-fno-omit-frame-pointer',
                     '-I',str(root/'driver/speaker'),str(p/'test.c'),'-o',str(p/'test')],check=True)

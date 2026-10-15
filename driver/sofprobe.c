@@ -142,6 +142,9 @@ NTSTATUS SofPlayStartPlaybackHardware(WDFDEVICE Device, WDF_POWER_DEVICE_STATE P
 static NTSTATUS SofRightPreviewCreate(WDFDEVICE device);
 static NTSTATUS SofRightPreviewStop(PSOFPROBE_DEVICE_CONTEXT c, NTSTATUS reason);
 static NTSTATUS SofRightPreviewBegin(PSOFPROBE_DEVICE_CONTEXT c);
+#ifdef SOFPLAY_RIGHT_TRIAL
+static NTSTATUS SofRightTrialArmLocked(WDFDEVICE device);
+#endif
 #endif
 #ifdef SOFPLAY_HEADPHONE
 NTSTATUS SofPlayStartPlaybackHardware(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState);
@@ -217,6 +220,12 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
     PSOFPROBE_DEVICE_CONTEXT context = SofProbeGetContext(Device);
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
 #ifdef SOFPLAY_RIGHT_PREVIEW
+#ifdef SOFPLAY_RIGHT_TRIAL
+    WdfWaitLockAcquire(context->AcxPowerLock, NULL);
+    status = SofRightTrialArmLocked(Device);
+    WdfWaitLockRelease(context->AcxPowerLock);
+    if (!NT_SUCCESS(status)) return status;
+#endif
     if (context->Preview.Phase != 1) return STATUS_DEVICE_NOT_READY;
     if (!context->AcxHardwareReady) {
         status = SofPlayStartPlaybackHardware(Device, WdfPowerDeviceD0);
@@ -468,6 +477,10 @@ SofProbeAcxStartLocked(_In_ WDFDEVICE Device)
     LARGE_INTEGER delay;
     NTSTATUS status;
 #ifdef SOFPLAY_RIGHT_PREVIEW
+#ifdef SOFPLAY_RIGHT_TRIAL
+    status = SofRightTrialArmLocked(Device);
+    if (!NT_SUCCESS(status)) return status;
+#endif
     if (context->Preview.Phase != 1) return STATUS_INVALID_DEVICE_STATE;
 #endif
     if (!context->SessionActive || !context->TonePrepared ||

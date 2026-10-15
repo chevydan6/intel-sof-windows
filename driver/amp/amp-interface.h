@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 // Query/stop are administrator diagnostics. Start/renew require KernelMode.
-// Fixed diagnostic leases only; no continuous playback or caller duration.
+// Fixed diagnostic modes plus an explicit renewable stream mode; no caller duration.
 static const GUID SofAmpInterfaceGuid =
     {0x1d4a273b,0x20e6,0x49eb,{0xb7,0xca,0x19,0x36,0xea,0x22,0xc7,0x54}};
 #define IOCTL_SOFAMP_QUERY CTL_CODE(FILE_DEVICE_UNKNOWN,0x940,METHOD_BUFFERED,FILE_READ_ACCESS)
@@ -14,6 +14,9 @@ static const GUID SofAmpInterfaceGuid =
 #define IOCTL_SOFAMP_START_PREVIEW_30 CTL_CODE(FILE_DEVICE_UNKNOWN,0x947,METHOD_BUFFERED,FILE_WRITE_ACCESS)
 #define IOCTL_SOFAMP_QUERY_PREVIEW_30 CTL_CODE(FILE_DEVICE_UNKNOWN,0x948,METHOD_BUFFERED,FILE_READ_ACCESS)
 // QUERY_PREVIEW_30/START_PREVIEW_30 advertise a separate 30200 ms cap.
+#define IOCTL_SOFAMP_START_STREAM CTL_CODE(FILE_DEVICE_UNKNOWN,0x949,METHOD_BUFFERED,FILE_WRITE_ACCESS)
+#define IOCTL_SOFAMP_QUERY_STREAM CTL_CODE(FILE_DEVICE_UNKNOWN,0x94a,METHOD_BUFFERED,FILE_READ_ACCESS)
+// STREAM replies advertise MaximumMs=0: renewable 100 ms lease without a total cap.
 // Status v2: MaximumMs is the supported listening cap; ordinary START stays 250 ms.
 // QUERY_PREVIEW/START_PREVIEW report the separate 8200 ms application-test cap.
 // Legacy QUERY/START_LISTEN/RENEW/STOP retain their original status ABI/cap.

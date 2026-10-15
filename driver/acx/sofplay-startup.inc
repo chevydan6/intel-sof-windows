@@ -291,7 +291,13 @@ SofPlayEvtD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousSta
     WdfWaitLockAcquire(context->AcxPowerLock, NULL);
 #ifdef SOFPLAY_RIGHT_PREVIEW
     if (context->PreviewAmp == NULL && !context->SessionActive && !context->ToneDmaRunning) {
+        NTSTATUS savedError = context->Preview.Error;
         RtlZeroMemory(&context->Preview, sizeof(context->Preview));
+#ifdef SOFPLAY_RIGHT_TRIAL
+        context->Preview.Error = savedError;
+#else
+        UNREFERENCED_PARAMETER(savedError);
+#endif
         RtlZeroMemory(&context->PreviewDiagnostics, sizeof(context->PreviewDiagnostics));
     }
 #endif

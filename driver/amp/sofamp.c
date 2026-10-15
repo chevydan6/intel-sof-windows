@@ -163,11 +163,12 @@ VOID SofAmpControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
         (code != IOCTL_SOFAMP_QUERY && code != IOCTL_SOFAMP_STOP &&
          code != IOCTL_SOFAMP_START && code != IOCTL_SOFAMP_START_LISTEN && code != IOCTL_SOFAMP_RENEW &&
          code != IOCTL_SOFAMP_QUERY_PREVIEW && code != IOCTL_SOFAMP_START_PREVIEW &&
-         code != IOCTL_SOFAMP_QUERY_PREVIEW_30 && code != IOCTL_SOFAMP_START_PREVIEW_30)) {
+         code != IOCTL_SOFAMP_QUERY_PREVIEW_30 && code != IOCTL_SOFAMP_START_PREVIEW_30 &&
+         code != IOCTL_SOFAMP_QUERY_STREAM && code != IOCTL_SOFAMP_START_STREAM)) {
         WdfRequestComplete(request, STATUS_INVALID_PARAMETER); return;
     }
     if ((code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_START_LISTEN ||
-         code == IOCTL_SOFAMP_START_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW_30 || code == IOCTL_SOFAMP_RENEW) &&
+         code == IOCTL_SOFAMP_START_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW_30 || code == IOCTL_SOFAMP_START_STREAM || code == IOCTL_SOFAMP_RENEW) &&
         WdfRequestGetRequestorMode(request) != KernelMode) {
         WdfRequestComplete(request, STATUS_ACCESS_DENIED); return;
     }
@@ -176,13 +177,15 @@ VOID SofAmpControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
     WdfWaitLockAcquire(c->Lock, NULL);
     if (!c->State.Ready) { status = STATUS_DEVICE_NOT_READY; goto done; }
     if (code == IOCTL_SOFAMP_START || code == IOCTL_SOFAMP_START_LISTEN ||
-        code == IOCTL_SOFAMP_START_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW_30) {
+        code == IOCTL_SOFAMP_START_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW_30 || code == IOCTL_SOFAMP_START_STREAM) {
         LARGE_INTEGER delay;
         // Match the board's sdmode-delay; the parent must establish valid,
         // quiet clocks/data before asking for an amplifier lease.
         delay.QuadPart = -(LONGLONG)SOFAMP_START_DELAY_MS * 10000;
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delay);
-        status = code == IOCTL_SOFAMP_START_PREVIEW_30
+        status = code == IOCTL_SOFAMP_START_STREAM
+            ? SofAmpStateStartBounded(&c->State, device, owner, 0)
+            : code == IOCTL_SOFAMP_START_PREVIEW_30
             ? SofAmpStateStartBounded(&c->State, device, owner, SOFAMP_PREVIEW_30_MAXIMUM_MS)
             : code == IOCTL_SOFAMP_START_PREVIEW
             ? SofAmpStateStartBounded(&c->State, device, owner, SOFAMP_PREVIEW_MAXIMUM_MS)
@@ -215,6 +218,8 @@ VOID SofAmpControl(WDFQUEUE queue, WDFREQUEST request, size_t outputBytes,
             result->MaximumMs = SOFAMP_PREVIEW_MAXIMUM_MS;
         if (code == IOCTL_SOFAMP_QUERY_PREVIEW_30 || code == IOCTL_SOFAMP_START_PREVIEW_30)
             result->MaximumMs = SOFAMP_PREVIEW_30_MAXIMUM_MS;
+        if (code == IOCTL_SOFAMP_QUERY_STREAM || code == IOCTL_SOFAMP_START_STREAM)
+            result->MaximumMs = 0;
         WdfRequestSetInformation(request, sizeof(*result));
     }
 done:

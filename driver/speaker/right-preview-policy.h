@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
-// One explicitly armed application stream. No automatic retry or rearming.
-#if defined(SOFPLAY_RIGHT_PREVIEW_30)
+// Diagnostic modes use one explicit arm. Trial mode follows the stream lifecycle.
+#if defined(SOFPLAY_RIGHT_TRIAL)
+#define SOF_RIGHT_PREVIEW_MS 0ULL // Stream lifetime; renewal watchdog remains active.
+#elif defined(SOFPLAY_RIGHT_PREVIEW_30)
 #define SOF_RIGHT_PREVIEW_MS 30000ULL
 #elif defined(SOFPLAY_RIGHT_PREVIEW_LONG)
 #define SOF_RIGHT_PREVIEW_MS 8000ULL
@@ -32,6 +34,10 @@ static __inline LONG SofRightPreviewSample(SOF_RIGHT_FILTER *filter, LONG left, 
 typedef struct {
     ULONG Phase; // 0 unarmed, 1 armed, 2 waiting for DMA, 3 active, 4 finished
     BOOLEAN Powered;
+#ifdef SOFPLAY_RIGHT_TRIAL
+    BOOLEAN AmpEnabled;
+    ULONGLONG LastAudio;
+#endif
     ULONGLONG Started, LastCheck, Position;
     NTSTATUS Error;
 } SOF_RIGHT_PREVIEW;
@@ -41,6 +47,8 @@ static __inline BOOLEAN SofRightPreviewCanContinue(SOF_RIGHT_PREVIEW *s,
                                                    ULONGLONG position)
 {
     return s->Phase == 3 && now >= s->LastCheck && now >= s->Started &&
+#ifndef SOFPLAY_RIGHT_TRIAL
         now - s->Started < SOF_RIGHT_PREVIEW_MS &&
+#endif
         now - s->LastCheck < SOF_RIGHT_PREVIEW_GAP_MS && position > s->Position;
 }

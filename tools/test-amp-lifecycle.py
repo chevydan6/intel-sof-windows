@@ -195,6 +195,25 @@ int main(void){
     // Legacy query reports the unchanged cap, including on a new amplifier.
     r=request(1,&a,IOCTL_SOFAMP_QUERY,0,48);assert(r.status==0 && r.out.MaximumMs==2200);
     }
+    // Normal stream mode retains ownership/auth/watchdog but has no total cap.
+    setup(&testDevice.State);
+    r=request(1,&a,IOCTL_SOFAMP_QUERY_STREAM,0,48);
+    assert(r.status==0 && r.out.MaximumMs==0 && !r.out.Active);
+    r=request(1,&a,IOCTL_SOFAMP_START_STREAM,0,48);
+    assert(r.status==STATUS_ACCESS_DENIED && !highWrites);
+    r=request(0,&a,IOCTL_SOFAMP_START_STREAM,0,48);
+    assert(r.status==0 && r.out.Active && r.out.MaximumMs==0);
+    for(unsigned i=0;i<3000;i++) {
+      clockMs+=40;r=request(0,&a,IOCTL_SOFAMP_RENEW,0,48);
+      assert(r.status==0 && r.out.Active && highWrites==1);
+    }
+    r=request(0,&b,IOCTL_SOFAMP_RENEW,0,48);assert(r.status==STATUS_ACCESS_DENIED);
+    r=request(0,&a,IOCTL_SOFAMP_START_STREAM,0,48);assert(r.status==STATUS_DEVICE_BUSY);
+    clockMs+=100;SofAmpTimer(&testDevice);
+    assert(!testDevice.State.Active && testDevice.State.Faulted && testDevice.State.WatchdogTrips==1);
+    r=request(0,&a,IOCTL_SOFAMP_START_STREAM,0,48);assert(r.status==STATUS_DEVICE_NOT_READY);
+    setup(&testDevice.State);r=request(0,&a,IOCTL_SOFAMP_START_STREAM,0,48);assert(r.status==0);
+    SofAmpFileCleanup(&a);assert(!testDevice.State.Active && testDevice.State.OutputRequest==1);
     puts("PASS: amp ownership, user-mode enable rejection, leases, watchdog, stale timers, cleanup and GPIO failures");
 }
 '''

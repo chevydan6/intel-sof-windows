@@ -2,7 +2,10 @@
 // AcxPowerLock serializes all amp calls and preview state. The separate
 // passive, non-periodic timer never performs GPIO I/O from the packet DPC.
 static ULONGLONG SofRightNow(VOID) { return KeQueryInterruptTime() / 10000; }
-#if defined(SOFPLAY_RIGHT_PREVIEW_30)
+#if defined(SOFPLAY_RIGHT_TRIAL)
+#define SOF_RIGHT_AMP_QUERY IOCTL_SOFAMP_QUERY_STREAM
+#define SOF_RIGHT_AMP_START IOCTL_SOFAMP_START_STREAM
+#elif defined(SOFPLAY_RIGHT_PREVIEW_30)
 #define SOF_RIGHT_AMP_QUERY IOCTL_SOFAMP_QUERY_PREVIEW_30
 #define SOF_RIGHT_AMP_START IOCTL_SOFAMP_START_PREVIEW_30
 #elif defined(SOFPLAY_RIGHT_PREVIEW_LONG)
@@ -19,7 +22,8 @@ static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
     WDF_MEMORY_DESCRIPTOR buffer;
     WDF_REQUEST_SEND_OPTIONS options;
     ULONG_PTR returned = 0;
-    ULONG maximumMs = (code == IOCTL_SOFAMP_QUERY_PREVIEW_30 || code == IOCTL_SOFAMP_START_PREVIEW_30)
+    ULONG maximumMs = (code == IOCTL_SOFAMP_QUERY_STREAM || code == IOCTL_SOFAMP_START_STREAM) ? 0
+        : (code == IOCTL_SOFAMP_QUERY_PREVIEW_30 || code == IOCTL_SOFAMP_START_PREVIEW_30)
         ? 30200 : (code == IOCTL_SOFAMP_QUERY_PREVIEW || code == IOCTL_SOFAMP_START_PREVIEW) ? 8200 : 2200;
     NTSTATUS status;
     if (c->PreviewAmp == NULL) return STATUS_DEVICE_NOT_READY;
@@ -34,13 +38,13 @@ static NTSTATUS SofRightAmp(PSOFPROBE_DEVICE_CONTEXT c, ULONG code)
         out.LeaseMs != 100 || out.MaximumMs != maximumMs)
         return STATUS_DEVICE_DATA_ERROR;
     if (code == IOCTL_SOFAMP_START_LISTEN || code == IOCTL_SOFAMP_START_PREVIEW ||
-        code == IOCTL_SOFAMP_START_PREVIEW_30 || code == IOCTL_SOFAMP_RENEW) {
+        code == IOCTL_SOFAMP_START_PREVIEW_30 || code == IOCTL_SOFAMP_START_STREAM || code == IOCTL_SOFAMP_RENEW) {
         if (!out.Active || out.OutputRequest != 2 || out.OnWrites != c->PreviewOnWrites + 1)
             return STATUS_DEVICE_DATA_ERROR;
     } else if (out.Active || out.OutputRequest != 1) return STATUS_DEVICE_DATA_ERROR;
     c->PreviewAmpWrites = out.OnWrites;
     if (code == IOCTL_SOFAMP_QUERY || code == IOCTL_SOFAMP_QUERY_PREVIEW ||
-        code == IOCTL_SOFAMP_QUERY_PREVIEW_30) c->PreviewOnWrites = out.OnWrites;
+        code == IOCTL_SOFAMP_QUERY_PREVIEW_30 || code == IOCTL_SOFAMP_QUERY_STREAM) c->PreviewOnWrites = out.OnWrites;
     return STATUS_SUCCESS;
 }
 
@@ -64,6 +68,9 @@ static NTSTATUS SofRightPreviewStop(PSOFPROBE_DEVICE_CONTEXT c, NTSTATUS reason)
         if (c->PreviewDiagnostics.Reason == SofRightPause)
             c->PreviewDiagnostics.Reason = SofRightAmpStopError;
     }
+#ifdef SOFPLAY_RIGHT_TRIAL
+    c->Preview.AmpEnabled = FALSE;
+#endif
     WdfSpinLockAcquire(c->AcxBufferLock);
     if (c->AcxRing != NULL) RtlZeroMemory(c->AcxRing, SOFPROBE_TONE_BYTES);
     WdfSpinLockRelease(c->AcxBufferLock);
@@ -72,12 +79,16 @@ static NTSTATUS SofRightPreviewStop(PSOFPROBE_DEVICE_CONTEXT c, NTSTATUS reason)
 
 static NTSTATUS SofRightPreviewBegin(PSOFPROBE_DEVICE_CONTEXT c)
 {
-    if (c->Preview.Phase != 1) return STATUS_INVALID_DEVICE_STATE;
+    if (c->Preview.Phase != 1 || !NT_SUCCESS(c->Preview.Error)) return STATUS_INVALID_DEVICE_STATE;
     RtlZeroMemory(&c->PreviewDiagnostics, sizeof(c->PreviewDiagnostics));
     c->PreviewDiagnostics.Version = 2;
     c->Preview.Phase = 2;
     c->Preview.Started = c->Preview.LastCheck = SofRightNow();
     c->Preview.Position = 0;
+#ifdef SOFPLAY_RIGHT_TRIAL
+    c->Preview.AmpEnabled = FALSE;
+    c->Preview.LastAudio = c->Preview.Started;
+#endif
     WdfTimerStart(c->PreviewTimer, WDF_REL_TIMEOUT_IN_MS(20));
     return STATUS_SUCCESS;
 }
@@ -88,6 +99,9 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
     PSOFPROBE_DEVICE_CONTEXT c = SofProbeGetContext(WdfTimerGetParentObject(timer));
     ULONGLONG now, position = 0;
     ULONG i;
+#ifdef SOFPLAY_RIGHT_TRIAL
+    BOOLEAN audible = FALSE;
+#endif
     NTSTATUS status = STATUS_SUCCESS;
     WdfWaitLockAcquire(c->AcxPowerLock, NULL);
     if (c->Preview.Phase != 2 && c->Preview.Phase != 3) goto done;
@@ -101,11 +115,13 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
         (c->ToneTriggerActive ? 2U : 0U);
     // Check time before any possible enable/renew. Late callbacks cannot
     // extend a lease or start a fresh burst after the absolute deadline.
+#ifndef SOFPLAY_RIGHT_TRIAL
     if (now - c->Preview.Started >= SOF_RIGHT_PREVIEW_MS) {
         c->PreviewDiagnostics.Reason = SofRightDeadline;
         (VOID)SofRightPreviewStop(c, STATUS_SUCCESS);
         goto done;
     }
+#endif
     if (now < c->Preview.LastCheck || now - c->Preview.LastCheck >= SOF_RIGHT_PREVIEW_GAP_MS) {
         c->PreviewDiagnostics.Reason = SofRightLateTick;
         status = STATUS_IO_TIMEOUT; goto stop;
@@ -124,6 +140,9 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
         c->PreviewDiagnostics.ObservedPositionLow = (ULONG)position;
         c->PreviewDiagnostics.ObservedPositionHigh = (ULONG)(position >> 32);
         for (i = 0; i < SOFPROBE_TONE_BYTES / sizeof(LONG); i += 2) {
+#ifdef SOFPLAY_RIGHT_TRIAL
+            if (samples[i+1] != 0) audible = TRUE;
+#endif
             if (samples[i] != 0 || samples[i+1] > SOF_RIGHT_PREVIEW_PEAK ||
                 samples[i+1] < -SOF_RIGHT_PREVIEW_PEAK) {
                 c->PreviewDiagnostics.Reason = SofRightInvalidPcm;
@@ -141,6 +160,31 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
         c->PreviewDiagnostics.Reason = SofRightNoProgress;
         status = STATUS_DEVICE_DATA_ERROR; goto stop;
     }
+#ifdef SOFPLAY_RIGHT_TRIAL
+    if (audible) c->Preview.LastAudio = now;
+    if (c->Preview.Powered) {
+        if (!c->Preview.AmpEnabled && audible) {
+            status = SofRightAmp(c, SOF_RIGHT_AMP_QUERY);
+            if (NT_SUCCESS(status)) status = SofRightAmp(c, SOF_RIGHT_AMP_START);
+            if (!NT_SUCCESS(status)) {
+                c->PreviewDiagnostics.Reason = SofRightAmpStartError; goto stop;
+            }
+            c->Preview.AmpEnabled = TRUE;
+        } else if (c->Preview.AmpEnabled && now - c->Preview.LastAudio >= 250) {
+            status = SofRightAmp(c, IOCTL_SOFAMP_STOP);
+            if (!NT_SUCCESS(status)) {
+                c->PreviewDiagnostics.Reason = SofRightAmpStopError; goto stop;
+            }
+            c->Preview.AmpEnabled = FALSE;
+        } else if (c->Preview.AmpEnabled) {
+            status = SofRightAmp(c, IOCTL_SOFAMP_RENEW);
+            if (!NT_SUCCESS(status)) {
+                c->PreviewDiagnostics.Reason = SofRightAmpRenewError; goto stop;
+            }
+        }
+    }
+    c->Preview.Phase = 3;
+#else
     if (c->Preview.Phase == 2) {
         if (c->Preview.Powered) {
             status = SofRightAmp(c, SOF_RIGHT_AMP_START);
@@ -161,6 +205,7 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
             }
         }
     }
+#endif
     c->Preview.LastCheck = now;
     c->Preview.Position = position;
     WdfTimerStart(timer, WDF_REL_TIMEOUT_IN_MS(20));
@@ -210,6 +255,26 @@ finish:
     return status;
 }
 
+#ifdef SOFPLAY_RIGHT_TRIAL
+static NTSTATUS SofRightTrialArmLocked(WDFDEVICE device)
+{
+    PSOFPROBE_DEVICE_CONTEXT c = SofProbeGetContext(device);
+    NTSTATUS status;
+    if (!NT_SUCCESS(c->Preview.Error)) return c->Preview.Error;
+    if (c->Preview.Phase == 1) return STATUS_SUCCESS;
+    if (c->Preview.Phase != 0 && c->Preview.Phase != 4) return STATUS_INVALID_DEVICE_STATE;
+    status = c->PreviewAmp == NULL ? SofRightPreviewOpen(device) : SofRightAmp(c, SOF_RIGHT_AMP_QUERY);
+    if (!NT_SUCCESS(status)) { c->Preview.Error = status; return status; }
+#ifdef SOFPLAY_RIGHT_TRIAL_DRY
+    c->Preview.Powered = FALSE;
+#else
+    c->Preview.Powered = TRUE;
+#endif
+    c->Preview.Phase = 1;
+    return STATUS_SUCCESS;
+}
+#endif
+
 static VOID SofRightPreviewControl(WDFDEVICE device, WDFREQUEST request,
                                    ULONG code, size_t inputBytes, size_t outputBytes)
 {
@@ -223,6 +288,11 @@ static VOID SofRightPreviewControl(WDFDEVICE device, WDFREQUEST request,
     }
     status = WdfRequestRetrieveOutputBuffer(request, sizeof(*out), (PVOID *)&out, NULL);
     if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
+#ifdef SOFPLAY_RIGHT_TRIAL
+    if (code == IOCTL_SOFPROBE_RIGHT_PREVIEW_ARM) {
+        WdfRequestComplete(request, STATUS_INVALID_DEVICE_STATE); return;
+    }
+#endif
     if (code == IOCTL_SOFPROBE_RIGHT_PREVIEW_ARM) {
         status = WdfRequestRetrieveInputBuffer(request, sizeof(ULONG), (PVOID *)&powered, NULL);
         if (!NT_SUCCESS(status)) { WdfRequestComplete(request, status); return; }
