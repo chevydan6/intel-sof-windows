@@ -1,6 +1,6 @@
 # N100 core-0 power acknowledgment
 
-On 2026-10-13, CI run [38375759572](https://github.com/chevydan6/windows-sof/actions/runs/38375759572) built the guarded probe (version 0.6.0.0) and passed independent INF verification. The package hashes and transient test signer were checked on the N100. The controller started with the same read-only baseline as before: `GCTL=1`, `PPCTL=0x40000000`, `ADSPCS=0x00000F0F`, and zero `PPSTS`, `ADSPIS`, `HIPCT`, and `HIPCI`.
+On 2026-10-13, CI run [38375759572](https://github.com/chevydan6/intel-sof-windows/actions/runs/38375759572) built the guarded probe (version 0.6.0.0) and passed independent INF verification. The package hashes and transient test signer were checked on the N100. The controller started with the same read-only baseline as before: `GCTL=1`, `PPCTL=0x40000000`, `ADSPCS=0x00000F0F`, and zero `PPSTS`, `ADSPIS`, `HIPCT`, and `HIPCI`.
 
 The opt-in power IOCTL required that exact baseline and used a sequential, passive-level queue. It changed only core 0's `SPA` bit, never released reset or stall, polled the hardware `CPA` acknowledgment for a bounded number of reads, and always cleared `SPA`. The result was:
 

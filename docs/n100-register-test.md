@@ -1,6 +1,6 @@
 # N100 HDA register probe (2026-10-13)
 
-The read-only register probe from [CI run 38371045258](https://github.com/chevydan6/windows-sof/actions/runs/38371045258) built with the Windows Driver Kit and passed a separate x64 `InfVerif /w` check. The three package files were hash-matched on the N100 before testing. As in the [first PCI probe test](n100-probe-test.md), the package's self-signed WDK certificate was trusted temporarily, test signing was enabled, and Windows was rebooted. The new signing certificate had thumbprint `A5D29821CEA710677446ABFF98239CFCD81885B0`.
+The read-only register probe from [CI run 38371045258](https://github.com/chevydan6/intel-sof-windows/actions/runs/38371045258) built with the Windows Driver Kit and passed a separate x64 `InfVerif /w` check. The three package files were hash-matched on the N100 before testing. As in the [first PCI probe test](n100-probe-test.md), the package's self-signed WDK certificate was trusted temporarily, test signing was enabled, and Windows was rebooted. The new signing certificate had thumbprint `A5D29821CEA710677446ABFF98239CFCD81885B0`.
 
 The driver mapped the target's 16 KiB HDA memory resource read-only and read a fixed set of registers. It did not write device registers, touch the 1 MiB DSP resource, or initialize firmware, DMA, interrupts, or the codec. WDF saved the readings under the device instance's `Device Parameters` registry subkey:
 

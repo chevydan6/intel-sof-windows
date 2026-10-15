@@ -9,7 +9,7 @@ none has been established by a physical electrical measurement.
 ## Installed amplifier control
 
 Source `61f3fbf` passed [WDK/INF and state-machine checks
-38532820265](https://github.com/chevydan6/windows-sof/actions/runs/38532820265).
+38532820265](https://github.com/chevydan6/intel-sof-windows/actions/runs/38532820265).
 It is installed as `oem44.inf`, version `8.6.50.535`, with the headphone parent
 held dormant during installation. The hardware query and application rejection
 checks passed: output-low accepted, active=0, accepted high requests=0. No
@@ -67,7 +67,7 @@ speaker playback repaired. No continuous speaker endpoint is enabled by this wor
 ## Initial hardware results
 
 Diagnostic source `b093791` passed WDK/INF and host checks in
-[build 38533829631](https://github.com/chevydan6/windows-sof/actions/runs/38533829631)
+[build 38533829631](https://github.com/chevydan6/intel-sof-windows/actions/runs/38533829631)
 and was installed as `oem45.inf`, version `8.15.46.10`.
 
 The left dry run returned version 2, stage 23, flags `0x401`, all 1,920,000
@@ -108,7 +108,7 @@ preparation and again before requesting amplifier enable. Corrupt or cleared
 samples abort with the amplifier off; host tests inject both conditions.
 This check does not establish the physical SSP waveform or speaker condition.
 
-Source `b32155c` passed [build 38535084193](https://github.com/chevydan6/windows-sof/actions/runs/38535084193)
+Source `b32155c` passed [build 38535084193](https://github.com/chevydan6/intel-sof-windows/actions/runs/38535084193)
 and installed as `oem46.inf`, version `8.26.30.273`. The dry-left, pulse-left
 and pulse-right tests returned `0xC01`, `0xF03`, `0xF04` respectively, full
 captures and zero status/cleanup errors. The host sample ring was intact at
@@ -129,7 +129,7 @@ The next fixed diagnostic uses -30.10 dBFS (12.04 dB above the second test),
 with the same sample verification, channel isolation, 40 ms stop and watchdog.
 It does not enable a general speaker playback path.
 
-Source `5d202a2` passed [build 38535944208](https://github.com/chevydan6/windows-sof/actions/runs/38535944208)
+Source `5d202a2` passed [build 38535944208](https://github.com/chevydan6/intel-sof-windows/actions/runs/38535944208)
 and installed as `oem47.inf`, version `8.33.50.788`. Its initial left pulse
 returned `0xF03`, full capture, zero status/cleanup errors and successful
 amplifier-off/DSP-baseline checks. The recording now shows a left-test 1 kHz

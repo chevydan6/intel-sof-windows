@@ -1,6 +1,6 @@
 # N100 ROM-entry preflight
 
-On 2026-10-13, CI run [38381751162](https://github.com/chevydan6/windows-sof/actions/runs/38381751162) built a read-only probe and passed separate INF verification. The probe bound to `8086:54c8`, then read the first HDA input stream and the DSP's Cannon Lake-style IPC registers before any ROM-entry write.
+On 2026-10-13, CI run [38381751162](https://github.com/chevydan6/intel-sof-windows/actions/runs/38381751162) built a read-only probe and passed separate INF verification. The probe bound to `8086:54c8`, then read the first HDA input stream and the DSP's Cannon Lake-style IPC registers before any ROM-entry write.
 
 | Register | Observed value |
 | --- | --- |

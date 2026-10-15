@@ -121,7 +121,7 @@ The right-only routing, DC filter, silence gate and amplifier watchdog remain.
 Status reports 600 centidB attenuation for trial builds; other output modes
 retain their prior levels. Updated extrema checks and all six local checks
 passed. ACX WDK build and independent INF verification passed in run
-[38693566635](https://github.com/chevydan6/windows-sof/actions/runs/38693566635).
+[38693566635](https://github.com/chevydan6/intel-sof-windows/actions/runs/38693566635).
 
 The package installed as oem69.inf, version 6.38.13.82, without reboot.
 The previous package is oem68.inf. Live status verified 6 dB attenuation,
@@ -144,7 +144,7 @@ above the documented board curve. Other modes retain their existing scaling.
 Status reports zero attenuation. The DC filter, channel isolation and amplifier
 lifecycle protections remain. All six local checks passed, including updated
 positive/negative saturation checks. ACX WDK build, tests and INF verification
-passed in [run 38695073543](https://github.com/chevydan6/windows-sof/actions/runs/38695073543).
+passed in [run 38695073543](https://github.com/chevydan6/intel-sof-windows/actions/runs/38695073543).
 
 Installed as oem70.inf, version 6.52.50.105, without reboot; previous package
 is oem69.inf. Live status verified zero driver attenuation, successful startup,

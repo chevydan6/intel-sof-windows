@@ -1,6 +1,6 @@
 # N100 guarded code-loader stream setup
 
-On 2026-10-13, CI run [38380889261](https://github.com/chevydan6/windows-sof/actions/runs/38380889261) built the Windows probe and passed separate INF verification. On the N100 target, a test-signed package bound to `8086:54c8`. An exact idle-register check and a previously staged, locally verified IPC3 firmware image were required before the one-shot stream setup IOCTL could write any registers.
+On 2026-10-13, CI run [38380889261](https://github.com/chevydan6/intel-sof-windows/actions/runs/38380889261) built the Windows probe and passed separate INF verification. On the N100 target, a test-signed package bound to `8086:54c8`. An exact idle-register check and a previously staged, locally verified IPC3 firmware image were required before the one-shot stream setup IOCTL could write any registers.
 
 The probe reset output stream 0, waited for reset acknowledgment and clearance, configured the code-loader parameters, read them back, and restored the original registers before returning. It never set RUN, released a DSP core, or requested firmware execution.
 

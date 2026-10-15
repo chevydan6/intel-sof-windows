@@ -44,8 +44,8 @@ References: [Linux RT5682 codec](https://github.com/torvalds/linux/blob/v6.8/sou
 
 Source `e238066` passed WDK build and independent INF verification:
 
-- [Headphone transport build 38526206348](https://github.com/chevydan6/windows-sof/actions/runs/38526206348), installed as `oem40.inf`, version `7.6.34.771`.
-- [Codec build 38526206349](https://github.com/chevydan6/windows-sof/actions/runs/38526206349), installed as `oem39.inf`, version `7.6.43.663`.
+- [Headphone transport build 38526206348](https://github.com/chevydan6/intel-sof-windows/actions/runs/38526206348), installed as `oem40.inf`, version `7.6.34.771`.
+- [Codec build 38526206349](https://github.com/chevydan6/intel-sof-windows/actions/runs/38526206349), installed as `oem39.inf`, version `7.6.43.663`.
 
 Host tests exercise the production analog and stream routines: normal
 start/stop/restart, initially absent jack, unplug/replug, failed poll, 172
@@ -141,7 +141,7 @@ afterward; increase only in measured steps with the headphones off ears.
 The acoustic results above apply to the original -24.08 dB transport.
 
 Full-range source `45db6da` passed [WDK build, INF validation and host tests
-38528570160](https://github.com/chevydan6/windows-sof/actions/runs/38528570160).
+38528570160](https://github.com/chevydan6/intel-sof-windows/actions/runs/38528570160).
 It was installed as `oem41.inf`, version `7.29.0.329`, for the gain sweep.
 Endpoint identity changed during installation; volume persisted at -24.0824 dB.
 The identity check muted the new endpoint until it was positively identified
@@ -184,7 +184,7 @@ Analysis supports `--tones 97 151` for the bass recordings.
 ### Final installed gain validation
 
 Source `ea9c9d9` passed [WDK build, independent INF verification and host tests
-38529731127](https://github.com/chevydan6/windows-sof/actions/runs/38529731127).
+38529731127](https://github.com/chevydan6/intel-sof-windows/actions/runs/38529731127).
 It is installed as `oem42.inf`, version `7.39.33.883`. The loaded service's
 driver binary SHA-256 matches the pinned build artifact:
 `D2717E1EBDFFC40907BC57C42162222B1C6DFE26B5FF63AAB7F24ED5E6EC8C8D`.
@@ -226,7 +226,7 @@ started for this adjustment because headphone placement is not confirmed.
 The codec's analog gain and speaker hold remain unchanged.
 
 Source `90b9722` passed [WDK build, independent INF verification and host tests
-38530664398](https://github.com/chevydan6/windows-sof/actions/runs/38530664398).
+38530664398](https://github.com/chevydan6/intel-sof-windows/actions/runs/38530664398).
 Installed as `oem43.inf`, version `7.47.54.802`. The installed binary hash
 matches the pinned artifact:
 `1C606819CE87D564CD7AEA39308848106D3221406A5762A56B4927950CCDC854`.

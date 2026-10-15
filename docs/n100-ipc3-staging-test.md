@@ -1,6 +1,6 @@
 # N100 IPC3 firmware staging
 
-On 2026-10-13, CI run [38378731177](https://github.com/chevydan6/windows-sof/actions/runs/38378731177) built version 0.9.0.0 and passed independent INF verification. The package hashes and transient test signer were checked on the N100. The local Alder Lake-N IPC3 image was decompressed, and the Windows client checked the entire image SHA-256 (`8433390e4abfe40b251ff3dec41604e7b817501d1097d51aa2f51c11444d3bf0`) before sending it to the driver.
+On 2026-10-13, CI run [38378731177](https://github.com/chevydan6/intel-sof-windows/actions/runs/38378731177) built version 0.9.0.0 and passed independent INF verification. The package hashes and transient test signer were checked on the N100. The local Alder Lake-N IPC3 image was decompressed, and the Windows client checked the entire image SHA-256 (`8433390e4abfe40b251ff3dec41604e7b817501d1097d51aa2f51c11444d3bf0`) before sending it to the driver.
 
 The driver accepted the exact 525,056-byte image, checked its `XMan` header and 768-byte manifest boundary, allocated retained DMA buffers, copied the 524,288-byte payload after the manifest, and built two 262,144-byte HDA buffer descriptors. The upload returned:
 

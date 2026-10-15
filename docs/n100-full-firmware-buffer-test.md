@@ -1,6 +1,6 @@
 # N100 firmware-sized DMA buffer allocation
 
-On 2026-10-13, CI run [38377910454](https://github.com/chevydan6/windows-sof/actions/runs/38377910454) built version 0.8.0.0 and passed independent INF verification. The signed package hashes were checked on the N100 before loading. The opt-in DMA allocation IOCTL returned:
+On 2026-10-13, CI run [38377910454](https://github.com/chevydan6/intel-sof-windows/actions/runs/38377910454) built version 0.8.0.0 and passed independent INF verification. The signed package hashes were checked on the N100 before loading. The opt-in DMA allocation IOCTL returned:
 
 | Field | Value |
 | --- | --- |

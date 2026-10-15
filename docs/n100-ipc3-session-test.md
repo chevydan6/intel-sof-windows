@@ -1,6 +1,6 @@
 # N100 managed IPC3 session test
 
-On 2026-10-13, the test-signed SOF development probe kept the N100 audio DSP running across separate Windows client processes. The WDK build and independent INF verification passed in [CI run 38396721481](https://github.com/chevydan6/windows-sof/actions/runs/38396721481).
+On 2026-10-13, the test-signed SOF development probe kept the N100 audio DSP running across separate Windows client processes. The WDK build and independent INF verification passed in [CI run 38396721481](https://github.com/chevydan6/intel-sof-windows/actions/runs/38396721481).
 
 The probe staged the locally validated IPC3 firmware and checked the idle controller baseline before boot. `StartSession` loaded firmware, acknowledged `FW_READY`, and received a read-only memory-usage reply. It then stopped the boot-only HDA code-loader DMA and restored the output stream while leaving the DSP active. A separate `SessionMemory` call received another memory-usage reply. `StopSession` reset and powered down the DSP; an independent preflight read found the original idle state.
 

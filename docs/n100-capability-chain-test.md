@@ -1,6 +1,6 @@
 # N100 complete HDA capability chain (2026-10-13)
 
-The bounded read-only probe from [CI run 38373417589](https://github.com/chevydan6/windows-sof/actions/runs/38373417589) built with the WDK, passed x64 `InfVerif /w`, and loaded on the N100. Its package files matched the CI hashes before installation. It followed the HDA extended-capability pointers within the validated 16 KiB HDA resource and stopped after five entries:
+The bounded read-only probe from [CI run 38373417589](https://github.com/chevydan6/intel-sof-windows/actions/runs/38373417589) built with the WDK, passed x64 `InfVerif /w`, and loaded on the N100. Its package files matched the CI hashes before installation. It followed the HDA extended-capability pointers within the validated 16 KiB HDA resource and stopped after five entries:
 
 | Order | Offset | Header | ID | Capability |
 | ---: | ---: | ---: | ---: | --- |

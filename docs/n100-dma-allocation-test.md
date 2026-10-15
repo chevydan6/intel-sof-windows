@@ -1,6 +1,6 @@
 # N100 Windows DMA allocation check
 
-On 2026-10-13, CI run [38377214934](https://github.com/chevydan6/windows-sof/actions/runs/38377214934) built version 0.7.0.0 of the development probe and passed independent INF verification. The package hashes and transient test signer were checked on the N100. The driver started on PCI `8086:54c8` and the `-TestDmaAllocation` IOCTL returned:
+On 2026-10-13, CI run [38377214934](https://github.com/chevydan6/intel-sof-windows/actions/runs/38377214934) built version 0.7.0.0 of the development probe and passed independent INF verification. The package hashes and transient test signer were checked on the N100. The driver started on PCI `8086:54c8` and the `-TestDmaAllocation` IOCTL returned:
 
 | Field | Result |
 | --- | --- |

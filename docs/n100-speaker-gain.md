@@ -28,7 +28,7 @@ This fixed board attenuation follows the existing Windows user/session volume co
 
 The first ACX build (`38464275766`) exposed a user-mode CRT header conflict from including `stdint.h` in kernel code. The helper now uses WDK `LONG` / `LONGLONG` types; the Linux test supplies fixed-width equivalents. Both workflows now select x64 MSBuild, and the ACX workflow independently verifies its generated INF with x64 InfVerif, matching the standalone probe's check.
 
-Commit `56b94d8` passed ACX WDK build and INF verification in run [38464522460](https://github.com/chevydan6/windows-sof/actions/runs/38464522460). Standalone probe run `38464522549` also passed. The sanitized ring/sample test passed again after the kernel-type correction.
+Commit `56b94d8` passed ACX WDK build and INF verification in run [38464522460](https://github.com/chevydan6/intel-sof-windows/actions/runs/38464522460). Standalone probe run `38464522549` also passed. The sanitized ring/sample test passed again after the kernel-type correction.
 
 The package installed as `oem25.inf`, version `20.39.28.945`, signer `C2DF4A97C6DB64210192DF5009B54CB75B85EF2B`. Audio services were stopped before the update and restarted in `finally`. Installation returned zero, with no reboot required. The controller reported `OK`, automatic firmware initialization reached stage 6 with success, and the live status returned `SpeakerAttenuationDb = 9`, proving the new binary was active.
 

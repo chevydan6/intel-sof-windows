@@ -8,7 +8,7 @@ The reported red error window was consistent with the interactive test harness f
 
 ## Candidate correction
 
-Source `b484a8d`, WDK build [38460312959](https://github.com/chevydan6/windows-sof/actions/runs/38460312959), changes the render path:
+Source `b484a8d`, WDK build [38460312959](https://github.com/chevydan6/intel-sof-windows/actions/runs/38460312959), changes the render path:
 
 - Clear DMA-consumed bytes under the same lock used for packet writes, so an underrun does not replay data from the preceding revolution of the 49,152-byte ring (128 ms at the hardware format).
 - Reject writes behind the DMA cursor with `STATUS_DATA_LATE_ERROR`, and reject writes beyond available ring space.

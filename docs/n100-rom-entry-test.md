@@ -1,6 +1,6 @@
 # N100 guarded DSP ROM-entry test
 
-On 2026-10-13, CI run [38385449331](https://github.com/chevydan6/windows-sof/actions/runs/38385449331) built the Windows probe and passed separate INF verification. The temporary, test-signed driver bound to the N100's `8086:54c8` audio controller. An exact idle-register check and a locally validated IPC3 image staged in DMA memory were required before the one-shot ROM-entry diagnostic could write registers.
+On 2026-10-13, CI run [38385449331](https://github.com/chevydan6/intel-sof-windows/actions/runs/38385449331) built the Windows probe and passed separate INF verification. The temporary, test-signed driver bound to the N100's `8086:54c8` audio controller. An exact idle-register check and a locally validated IPC3 image staged in DMA memory were required before the one-shot ROM-entry diagnostic could write registers.
 
 The probe configured output stream 0 for the firmware payload without setting its RUN bit. It powered DSP core 0, saved and set the three SSP SSC1 bits used by the Linux boot sequence, sent ROM control `0x81004000`, released core reset and stall, and waited for the ROM acknowledgment and initialization state. It then restored the SSP bits, powered the core down, and reset the stream. It did **not** start firmware DMA or expose an audio device.
 

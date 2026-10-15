@@ -1,6 +1,6 @@
 # N100 guarded ICCMAX capture-stream setup
 
-On 2026-10-13, CI run [38382856189](https://github.com/chevydan6/windows-sof/actions/runs/38382856189) built the one-shot capture setup probe and passed separate INF verification. The driver checked exact idle capture, processing-pipe, IPC, and DSP baseline values before any stream write. It allocated a 4 KiB aligned capture buffer and two 2048-byte descriptors, as the Linux ICCMAX path requires two HDA descriptor entries.
+On 2026-10-13, CI run [38382856189](https://github.com/chevydan6/intel-sof-windows/actions/runs/38382856189) built the one-shot capture setup probe and passed separate INF verification. The driver checked exact idle capture, processing-pipe, IPC, and DSP baseline values before any stream write. It allocated a 4 KiB aligned capture buffer and two 2048-byte descriptors, as the Linux ICCMAX path requires two HDA descriptor entries.
 
 The probe reset input stream 0, waited for acknowledgment, programmed the parameters, read them back, and restored the original values before returning. It did **not** set RUN, fetch DMA data, power the DSP core, or enter the ROM.
 

@@ -2,9 +2,9 @@
 
 On 2026-10-13, a temporary test-signed probe booted the locally validated `sof-adl-n.ri` firmware on the N100's `8086:54c8` controller and captured its first IPC3 message. The probe uses the same bounded ROM entry, HDA code-loader DMA, and SPIB setup described in the [firmware-transfer test](n100-firmware-dma-test.md). It does not leave firmware running after the IOCTL returns.
 
-The first firmware-ready probe ([CI run 38389796118](https://github.com/chevydan6/windows-sof/actions/runs/38389796118)) received a 108-byte uplink mailbox message with command `0x70000000`, but reported cleanup result 8. A follow-up ([CI run 38390699128](https://github.com/chevydan6/windows-sof/actions/runs/38390699128)) isolated the mismatch to three SSP registers: each read `0xffffffff` after firmware startup, while output, capture, DSP, SPIB, and IPC state restored to the prior values. The SSP blocks had become inaccessible after firmware boot. The probe now records that condition and skips writes to inaccessible registers; accessible SSP values still require exact restoration.
+The first firmware-ready probe ([CI run 38389796118](https://github.com/chevydan6/intel-sof-windows/actions/runs/38389796118)) received a 108-byte uplink mailbox message with command `0x70000000`, but reported cleanup result 8. A follow-up ([CI run 38390699128](https://github.com/chevydan6/intel-sof-windows/actions/runs/38390699128)) isolated the mismatch to three SSP registers: each read `0xffffffff` after firmware startup, while output, capture, DSP, SPIB, and IPC state restored to the prior values. The SSP blocks had become inaccessible after firmware boot. The probe now records that condition and skips writes to inaccessible registers; accessible SSP values still require exact restoration.
 
-The final probe ([CI run 38391560316](https://github.com/chevydan6/windows-sof/actions/runs/38391560316)) returned:
+The final probe ([CI run 38391560316](https://github.com/chevydan6/intel-sof-windows/actions/runs/38391560316)) returned:
 
 | Observation | Value |
 | --- | --- |

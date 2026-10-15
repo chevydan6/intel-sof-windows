@@ -12,7 +12,7 @@ Microsoft specifies that valid bits are left-aligned within a larger PCM contain
 
 The previous acceptance check tested rate, channel count, and block alignment without fully validating the sample encoding. Commit `5cefe8d` adds a complete integer-PCM format guard, including the full subtype GUID, extension length, widths, channel mask, and byte rate. This closes a real validation gap but is not evidence that a floating-point stream caused the original distortion.
 
-Local sanitizer tests exercised the production format and attenuation helpers. The [Windows build and INF verification](https://github.com/chevydan6/windows-sof/actions/runs/38496792997) passed for this commit. The format change has been pushed but has not been installed on the laptop. The previously verified held ACX and shutdown-only amplifier packages remain installed.
+Local sanitizer tests exercised the production format and attenuation helpers. The [Windows build and INF verification](https://github.com/chevydan6/intel-sof-windows/actions/runs/38496792997) passed for this commit. The format change has been pushed but has not been installed on the laptop. The previously verified held ACX and shutdown-only amplifier packages remain installed.
 
 ## Offline sample checks
 
@@ -48,4 +48,4 @@ Linux v6.8 [hda-pcm.c](https://kernel.googlesource.com/pub/scm/linux/kernel/git/
 
 A subsequent read-only target check again returned ThermalHold 1, HardwareReady 0, zero runs/submissions/completions, both audio services Stopped, and amplifier stage 3/status 0/off-write count 1. No playback, firmware startup, driver installation, or reboot occurred during this continuation.
 
-The corrected commit `83228eb` passed the [ACX Windows build, INF verification, and offline tests](https://github.com/chevydan6/windows-sof/actions/runs/38497684602) and the [standalone probe build](https://github.com/chevydan6/windows-sof/actions/runs/38497684706). This verifies the software change's build and tested buffer behavior, not audible or thermal repair.
+The corrected commit `83228eb` passed the [ACX Windows build, INF verification, and offline tests](https://github.com/chevydan6/intel-sof-windows/actions/runs/38497684602) and the [standalone probe build](https://github.com/chevydan6/intel-sof-windows/actions/runs/38497684706). This verifies the software change's build and tested buffer behavior, not audible or thermal repair.

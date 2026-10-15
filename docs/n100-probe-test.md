@@ -1,6 +1,6 @@
 # N100 read-only PCI probe test (2026-10-13)
 
-The development package from [CI run 38368597210](https://github.com/chevydan6/windows-sof/actions/runs/38368597210) was tested on the N100 Windows 11 target. The package had already built with the WDK and passed a separate x64 `InfVerif /w` check. Its files matched the staged hashes before the test:
+The development package from [CI run 38368597210](https://github.com/chevydan6/intel-sof-windows/actions/runs/38368597210) was tested on the N100 Windows 11 target. The package had already built with the WDK and passed a separate x64 `InfVerif /w` check. Its files matched the staged hashes before the test:
 
 - `sofprobe.sys`: `dcdc50755292ecee3d1b1ecb4fe342eba202cfe1bfb1e14a527c628ea79b4885`
 - `sofprobe.inf`: `b13b38276ce8b34b40ad9383665d617e07962d076f6b6e62c25c955bb19d157e`

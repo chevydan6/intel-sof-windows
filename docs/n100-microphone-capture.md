@@ -42,7 +42,7 @@ performed by the test scripts.
 
 ## Hardware result, 2026-10-14
 
-Build [38524223364](https://github.com/chevydan6/windows-sof/actions/runs/38524223364)
+Build [38524223364](https://github.com/chevydan6/intel-sof-windows/actions/runs/38524223364)
 from `5c52b0b` passed WDK compilation, INF verification, the existing playback
 checks and the new microphone ABI/DMA cleanup tests. Installed as `oem38.inf`,
 version `6.47.4.412`.

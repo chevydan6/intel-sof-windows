@@ -1,6 +1,6 @@
 # N100 PCI bus-master preflight
 
-On 2026-10-13, CI run [38383597548](https://github.com/chevydan6/windows-sof/actions/runs/38383597548) built a read-only PCI configuration probe and passed separate INF verification. Using Windows' `BUS_INTERFACE_STANDARD`, the bound driver read the first 16 bytes of PCI configuration space through the parent bus driver.
+On 2026-10-13, CI run [38383597548](https://github.com/chevydan6/intel-sof-windows/actions/runs/38383597548) built a read-only PCI configuration probe and passed separate INF verification. Using Windows' `BUS_INTERFACE_STANDARD`, the bound driver read the first 16 bytes of PCI configuration space through the parent bus driver.
 
 | Field | Observed value |
 | --- | --- |

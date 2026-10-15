@@ -1,6 +1,6 @@
 # N100 guarded IPC3 request/reply test
 
-On 2026-10-13, the N100's temporarily installed, test-signed probe completed its first host-initiated IPC3 exchange. This was a bounded one-shot test: it booted the locally validated `sof-adl-n.ri` image, read the 108-byte `FW_READY` record, acknowledged that notification, sent a read-only memory-usage request, captured the reply, and reset/powered down the DSP before returning. The WDK build and independent INF verification passed in [CI run 38395066054](https://github.com/chevydan6/windows-sof/actions/runs/38395066054).
+On 2026-10-13, the N100's temporarily installed, test-signed probe completed its first host-initiated IPC3 exchange. This was a bounded one-shot test: it booted the locally validated `sof-adl-n.ri` image, read the 108-byte `FW_READY` record, acknowledged that notification, sent a read-only memory-usage request, captured the reply, and reset/powered down the DSP before returning. The WDK build and independent INF verification passed in [CI run 38395066054](https://github.com/chevydan6/intel-sof-windows/actions/runs/38395066054).
 
 The firmware's `FW_READY` base record reported zero for its mailbox offset fields. The validated IPC3 `XMan` window descriptor supplied the addresses instead: uplink at DSP BAR + `0x81000` (4 KiB) and downlink at DSP BAR + `0xa0000` (8 KiB). The probe used the downlink for an eight-byte `SOF_IPC_GLB_DEBUG | SOF_IPC_DEBUG_MEM_USAGE` request (`0xd0010000`), following Linux SOF's mailbox and CNL IPC doorbell ordering.
 

@@ -1,6 +1,6 @@
 # N100 bounded ICCMAX capture DMA test
 
-On 2026-10-13, CI run [38384472650](https://github.com/chevydan6/windows-sof/actions/runs/38384472650) built a one-shot capture DMA probe and passed separate INF verification. On the N100, the bound driver checked the exact idle capture, DSP, IPC, PCI command, and LTRP values. It created a 4 KiB WDF common buffer and a two-entry HDA BDL, configured input stream 0, applied Linux's temporary LTRP guardband, set RUN for about 2 ms, and stopped it before releasing either buffer.
+On 2026-10-13, CI run [38384472650](https://github.com/chevydan6/intel-sof-windows/actions/runs/38384472650) built a one-shot capture DMA probe and passed separate INF verification. On the N100, the bound driver checked the exact idle capture, DSP, IPC, PCI command, and LTRP values. It created a 4 KiB WDF common buffer and a two-entry HDA BDL, configured input stream 0, applied Linux's temporary LTRP guardband, set RUN for about 2 ms, and stopped it before releasing either buffer.
 
 | Observation | Value |
 | --- | --- |

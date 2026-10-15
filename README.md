@@ -1,4 +1,4 @@
-# Windows SOF host driver (Alder Lake-N first)
+# Intel SOF Audio Driver for Windows
 
 Open-source Windows host-driver development for Intel Sound Open Firmware (SOF).
 The first target is an Intel N100 laptop with a PCI audio controller at
@@ -41,7 +41,7 @@ The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, the [IPC3 f
 The [ACX playback investigation](docs/n100-acx-playback-test.md) now records successful Windows format negotiation and a three-second WAV transfer (301 packets submitted and completed), after correcting packet-buffer alignment and preparing SOF before starting Windows audio services. Audible confirmation of that app test is pending; the earlier [hardware tone](docs/n100-speaker-tone-test.md) was heard. The [automatic startup work](docs/n100-acx-autostart-test.md) moves firmware and speaker setup into the driver and resets PCM between streams. Interrupt-driven IPC service, general topology support, and comprehensive power recovery remain unfinished.
 
 A public 0 dB stereo speaker build with both channels enabled is available as a
-[test-signed prerelease](https://github.com/chevydan6/windows-sof/releases/tag/v0.1.0-rc.2).
+[test-signed prerelease](https://github.com/chevydan6/intel-sof-windows/releases/tag/v0.1.0-rc.2).
 The right-only build is a separate workaround for the owner’s laptop.
 See [package contents and Microsoft signing](docs/driver-release-and-signing.md).
 

@@ -1,6 +1,6 @@
 # N100 first output-stream baseline
 
-On 2026-10-13, CI run [38379768219](https://github.com/chevydan6/windows-sof/actions/runs/38379768219) built version 1.0.0.0 and passed independent INF verification. After package hash and signer checks, the read-only driver captured the first HDA output stream. `GCAP=0x9701` gives seven input streams, so output stream 0 starts at HDA BAR + `0x160`.
+On 2026-10-13, CI run [38379768219](https://github.com/chevydan6/intel-sof-windows/actions/runs/38379768219) built version 1.0.0.0 and passed independent INF verification. After package hash and signer checks, the read-only driver captured the first HDA output stream. `GCAP=0x9701` gives seven input streams, so output stream 0 starts at HDA BAR + `0x160`.
 
 | Register | Observed value |
 | --- | --- |

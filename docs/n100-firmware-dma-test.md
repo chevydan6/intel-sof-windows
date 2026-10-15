@@ -2,11 +2,11 @@
 
 On 2026-10-13, the N100's `8086:54c8` controller was temporarily bound to a test-signed development probe. The locally validated `sof-adl-n.ri` IPC3 image was staged as a 524,288-byte payload in a Windows DMA common buffer with a two-entry HDA buffer descriptor list. Both probe versions passed the Windows WDK build and separate INF verification before hardware testing.
 
-The first probe ([CI run 38388103746](https://github.com/chevydan6/windows-sof/actions/runs/38388103746)) entered the DSP ROM and set output stream 0 RUN. The RUN bit read back as `0x0014001e`, but its position stayed zero, no stream error appeared, and ROM status stayed `0x05000001` throughout the bounded firmware wait. The driver returned result 11 (firmware-entered timeout), stopped the stream, and restored the registers. An independent post-test snapshot found the original idle output, capture, DSP power, and IPC values. The package was removed and normal boot verified before another attempt.
+The first probe ([CI run 38388103746](https://github.com/chevydan6/intel-sof-windows/actions/runs/38388103746)) entered the DSP ROM and set output stream 0 RUN. The RUN bit read back as `0x0014001e`, but its position stayed zero, no stream error appeared, and ROM status stayed `0x05000001` throughout the bounded firmware wait. The driver returned result 11 (firmware-entered timeout), stopped the stream, and restored the registers. An independent post-test snapshot found the original idle output, capture, DSP power, and IPC values. The package was removed and normal boot verified before another attempt.
 
 The Linux SOF [stream preparation](https://github.com/torvalds/linux/blob/master/sound/soc/sof/intel/hda-stream.c) also enables Software Position Based FIFO (SPIB) for the code-loader stream and sets its byte limit to the firmware size. That step was absent from the first probe. The N100 capability chain places SPIB at HDA offset `0x700`. With seven capture streams, output stream 0 has global index 7, so its enable bit is `0x80` at `0x704` and its byte-limit register is at `0x740`.
 
-The second probe ([CI run 38388893146](https://github.com/chevydan6/windows-sof/actions/runs/38388893146)) guarded and restored those SPIB registers. Its one-shot test reported:
+The second probe ([CI run 38388893146](https://github.com/chevydan6/intel-sof-windows/actions/runs/38388893146)) guarded and restored those SPIB registers. Its one-shot test reported:
 
 | Observation | Value |
 | --- | --- |

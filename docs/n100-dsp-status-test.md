@@ -1,6 +1,6 @@
 # N100 extended capability and DSP status test (2026-10-13)
 
-The read-only probe from [CI run 38372426287](https://github.com/chevydan6/windows-sof/actions/runs/38372426287) built with the Windows Driver Kit and passed x64 `InfVerif /w`. Its three package files matched the CI hashes on the N100. The package was test-signed, loaded with test signing enabled, and removed afterward using the same controlled procedure as the [previous register test](n100-register-test.md).
+The read-only probe from [CI run 38372426287](https://github.com/chevydan6/intel-sof-windows/actions/runs/38372426287) built with the Windows Driver Kit and passed x64 `InfVerif /w`. Its three package files matched the CI hashes on the N100. The package was test-signed, loaded with test signing enabled, and removed afterward using the same controlled procedure as the [previous register test](n100-register-test.md).
 
 The driver read the HDA resource and the first `0x100` bytes of the Intel DSP resource. It made no hardware writes. The HDA values from the prior test were unchanged. New values were:
 
