@@ -110,3 +110,25 @@ The low-volume complaint remains unresolved. No further gain change, driver
 restart, service stop or reboot occurred during this inspection. Current
 speaker temperature and a comparable Fedora/ChromeOS loudness observation are
 still needed before deciding whether to increase speaker drive further.
+
+
+## Requested additional 3 dB — 2026-10-15
+
+At the user's request, source `609073b` raises the normal-use trial from
+-9 dB to approximately -6 dB using 16423/32768 scaling and symmetric
+1,076,297,727 peak ceiling. This exceeds the documented board curve by 3 dB.
+The right-only routing, DC filter, silence gate and amplifier watchdog remain.
+Status reports 600 centidB attenuation for trial builds; other output modes
+retain their prior levels. Updated extrema checks and all six local checks
+passed. ACX WDK build and independent INF verification passed in run
+[38693566635](https://github.com/chevydan6/windows-sof/actions/runs/38693566635).
+
+The package installed as oem69.inf, version 6.38.13.82, without reboot.
+The previous package is oem68.inf. Live status verified 6 dB attenuation,
+successful firmware startup, active ordinary application playback, 798 packets
+submitted, no late packets, no callback failure, and no amplifier faults or
+watchdog trips. Endpoint remained 0 dB and unmuted; both audio services are
+running. These checks establish the active setting and transport, not acoustic
+loudness or speaker temperature. Listening feedback remains pending.
+Private package and installation scripts are under
+`build/speaker-repair/gain-minus6-609073b/`.
