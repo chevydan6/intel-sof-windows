@@ -209,6 +209,15 @@ int main(void) {
     powerLock=1; assert(SofRightPreviewStop(&c,STATUS_SUCCESS)==0); powerLock=0;
     tick(&c,20,7680); assert(!ampOn && starts==1 && c.Preview.Phase==4);
     assert(c.PreviewDiagnostics.Reason==SofRightPause);
+    // Verify the initial gain separately from the DC blocker's decay.
+    SOF_RIGHT_FILTER gainFilter={0};
+#ifdef SOFPLAY_RIGHT_TRIAL
+    assert(SofRightPreviewSample(&gainFilter,INT32_MAX,INT32_MAX)==761921535);
+    memset(&gainFilter,0,sizeof(gainFilter));
+    assert(SofRightPreviewSample(&gainFilter,INT32_MIN,INT32_MIN)==-761921535);
+#else
+    assert(SofRightPreviewSample(&gainFilter,INT32_MAX,INT32_MAX)==536870911);
+#endif
     // Sample conversion must preserve channel isolation and bounded arithmetic.
     Context a={0}, b={0}; LONG input[4096], whole[4096], split[4096];
     uint32_t random=1;

@@ -11,7 +11,12 @@
 #define SOF_RIGHT_PREVIEW_MS 2000ULL
 #endif
 #define SOF_RIGHT_PREVIEW_GAP_MS 80ULL
+#ifdef SOFPLAY_RIGHT_TRIAL
+// PUJJOTEEN board speaker ceiling: -9 dB (11626/32768).
+#define SOF_RIGHT_PREVIEW_PEAK 761921535L
+#else
 #define SOF_RIGHT_PREVIEW_PEAK 536870911L
+#endif
 typedef struct {
     LONG PreviousInput, PreviousOutput;
 } SOF_RIGHT_FILTER;
@@ -19,8 +24,12 @@ typedef struct {
 static __inline LONG SofRightPreviewSample(SOF_RIGHT_FILTER *filter, LONG left, LONG right)
 {
     // Mono preserves content from either application channel; the physical
-    // left slot is always zero. Widen before summing, then attenuate by 12 dB.
+    // left slot is always zero. Widen before summing and scaling.
+#ifdef SOFPLAY_RIGHT_TRIAL
+    LONG input = (LONG)((((LONGLONG)left + right) * 11626) / 65536);
+#else
     LONG input = (LONG)(((LONGLONG)left + right) / 8);
+#endif
     LONGLONG output = (LONGLONG)input - filter->PreviousInput +
         ((LONGLONG)filter->PreviousOutput * 32640) / 32768;
     // First-order DC blocker (~30 Hz at 48 kHz), with a fixed peak ceiling.

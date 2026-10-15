@@ -78,7 +78,7 @@ try {
   for($j=32;$j-lt $bytes.Length;$j+=8) {
    if([BitConverter]::ToInt32($bytes,$j)-ne 0){throw 'Left slot was not silent'}
    $sample=[BitConverter]::ToInt32($bytes,$j+4)
-   if([Math]::Abs([long]$sample)-gt 536870911){throw 'Peak ceiling exceeded'}
+   if([Math]::Abs([long]$sample)-gt 761921535){throw 'Peak ceiling exceeded'}
    if($sample-ne 0){$nonzero++}
   }
  }

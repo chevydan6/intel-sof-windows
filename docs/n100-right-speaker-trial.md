@@ -7,7 +7,9 @@ pause/stop, while faults remain latched until device restart. Normal enumeration
 still leaves firmware and the amplifier off until an application opens a stream.
 
 The physical left channel remains zero. Stereo app content is mixed into the
-right channel at the previously tested gain, DC filter and peak ceiling. This
+right channel through a DC filter and fixed peak ceiling. The original trial
+used -12.04 dB; the volume correction below raises it to the board
+configuration's -9 dB. This
 speaker-only trial does not integrate automatic headphone-jack routing.
 
 A distinct amplifier START_STREAM command retains its 100 ms renewal lease
@@ -64,3 +66,14 @@ normal-use feedback and sleep/resume testing remain outstanding. A ten-minute
 read-only status logger records preview state and amplifier faults during the
 initial user trial; it does not record microphone audio or change playback.
 
+## Quiet playback report
+
+The user reported low output with both Windows and the video player's volume
+at maximum. The endpoint was verified at 0 dB, unmuted. The first trial retained
+an extra -3.04 dB of attenuation from the bounded speaker tests. The trial-only
+conversion now uses `(left + right) * 11626 / 65536`, with symmetric ceiling
+761,921,535. This gives the averaged stereo content the board configuration's
+-9 dB maximum; it does not boost above that board setting. Earlier bounded
+preview modes keep their original -12.04 dB setting and now report it accurately.
+The left slot, DC filter, idle gate, fault latch and amplifier watchdog remain.
+New-package build and listening verification are pending.

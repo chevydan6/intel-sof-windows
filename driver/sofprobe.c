@@ -3297,6 +3297,9 @@ SofProbeEvtIoDeviceControl(
         acx->ThermalHold = context->SpeakerTestAttempted ? 0 : 1;
 #endif
         acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
+#if defined(SOFPLAY_RIGHT_PREVIEW) && !defined(SOFPLAY_RIGHT_TRIAL)
+        acx->SpeakerAttenuationCentiDb = 1204;
+#endif
 #ifdef SOFPLAY_HEADPHONE
         // Legacy field name; report the active output's PCM attenuation.
         acx->SpeakerAttenuationCentiDb = 954;
