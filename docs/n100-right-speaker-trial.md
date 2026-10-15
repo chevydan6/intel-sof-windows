@@ -26,4 +26,41 @@ manual ARM commands, so a user process cannot change its policy.
 Offline tests exercise two minutes of renewals, silence/off/audio-resume,
 repeated normal stream arming, query failures, lost heartbeats, invalid PCM,
 DMA errors, callback delays, ownership and kernel-only enable authorization.
-Windows builds and hardware validation are pending.
+Source `c909fda` passed all four CI workflows, including WDK compilation and
+independent INF checks. ACX run `38664599750` built both trial variants and all
+older previews; amplifier run `38664599689` passed stream/diagnostic lifecycle
+checks. Amplifier oem65.inf (1.15.12.359), dry parent oem66.inf (1.15.32.16),
+and powered parent oem67.inf (1.15.14.481) installed without a Windows reboot.
+User-mode enable and renewal requests, including START_STREAM, were rejected
+with the amplifier remaining off.
+
+## Application verification
+
+`tools/invoke-right-speaker-trial.ps1` runs the desktop worker from SSH. The
+fixture is a 50-second, 48 kHz stereo PCM WAV at the previous test gain, with
+exact silence from seconds 3 through 6. No manual ARM request is used. The
+worker checks output after starting an ordinary SoundPlayer stream, observes
+silence/off and resumed audio, verifies the stream is still active at 35 seconds,
+stops, and plays a second two-second session without restarting the device.
+
+Both dry and powered checks passed. Powered stream durations observed by the
+driver were 34738 ms and 1889 ms (application startup precedes the stream).
+There were no driver errors, late packets, amplifier faults or watchdog trips.
+The second session performed one PCM reset. The amplifier was off during the
+silent section, on after sound resumed, and off after both stops, observed at
+51 ms and 53 ms from the stop requests. Enable counts were exactly three:
+initial sound, return from silence, and the second stream. The captured left
+channel was all zero; right peak 378,762,180 stayed below the existing ceiling.
+
+The private 50.987-second microphone recording had no clipped samples on either
+channel after startup. This does not establish long-duration temperature or
+sound quality. Evidence is retained under ignored
+`build/speaker-repair/right-trial-c909fda/`.
+
+At the user's explicit request the powered trial is left installed for ordinary
+application testing, with Windows audio services running. It is no longer
+switched back to the separate headphone package after verification. Broader
+normal-use feedback and sleep/resume testing remain outstanding. A ten-minute
+read-only status logger records preview state and amplifier faults during the
+initial user trial; it does not record microphone audio or change playback.
+

@@ -5,15 +5,17 @@ The first target is an Intel N100 laptop with a PCI audio controller at
 `8086:54c8` and an I2C Realtek RT5682 codec (`ACPI\10EC5682`). This repository
 contains diagnostic tooling and experimental ACX audio drivers.
 
-**Everyday speaker playback remains disabled after reported heating and
-distortion.** A separate, explicitly armed [right-speaker preview](docs/n100-right-speaker-preview.md)
-has played Windows application audio in bounded two-, eight- and thirty-second tests,
-with the left channel silent and amplifier shutdown verified. The user confirmed
-clear sound and cool speaker areas for all three durations. Left-side imbalance also reproduces
-in Fedora; its hardware cause remains unresolved. See the
-[thermal investigation](docs/n100-amplifier-thermal-review.md).
+An opt-in [right-speaker normal-use trial](docs/n100-right-speaker-trial.md)
+supports ordinary Windows applications without a timed cutoff or manual arming.
+It retains the amplifier renewal watchdog, switches off on stream stop or
+sustained silence, and keeps the damaged/imbalanced left channel silent.
+The user confirmed clear sound and cool speaker areas in earlier two-, eight-
+and thirty-second tests. Broader normal-use and sleep/resume validation remain
+in progress; the speaker trial does not yet integrate headphone-jack switching.
+Left-side imbalance also reproduces in Fedora; its hardware cause remains
+unresolved. See the [thermal investigation](docs/n100-amplifier-thermal-review.md).
 
-Normal headphone playback now works through Windows applications on the target.
+A separate headphone driver supports Windows application playback on the target.
 Stream start/stop, repeated playback, physical jack removal/reinsertion, Windows
 volume/mute, and acoustic tone capture have been verified. The RT5682 output
 powers down when its stream stops. A fixed -9.54 dB PCM ceiling permits
