@@ -66,6 +66,8 @@ jobs:
             property: RightPreviewLong
           - artifact: sofplay-right-preview-30-package
             property: RightPreview30
+          - artifact: sofplay-stereo-trial-package
+            property: StereoTrial
           - artifact: sofplay-right-trial-package
             property: RightTrial
           - artifact: sofplay-right-trial-dry-package

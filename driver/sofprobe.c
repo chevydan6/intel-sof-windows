@@ -67,6 +67,9 @@ typedef struct _SOFPROBE_DEVICE_CONTEXT {
     SOF_RIGHT_PREVIEW Preview;
     SOF_RIGHT_PREVIEW_DIAGNOSTICS PreviewDiagnostics;
     SOF_RIGHT_FILTER PreviewFilter;
+#ifdef SOFPLAY_STEREO_TRIAL
+    SOF_RIGHT_FILTER PreviewLeftFilter;
+#endif
     ULONG PreviewOnWrites, PreviewAmpWrites;
 #endif
 #ifdef SOFPLAY_HEADPHONE
@@ -261,6 +264,9 @@ SofProbeAcxPrepareBuffer(_In_ WDFDEVICE Device, _Out_ PULONG Bytes)
         context->AcxEosReceived = FALSE;
 #ifdef SOFPLAY_RIGHT_PREVIEW
         RtlZeroMemory(&context->PreviewFilter, sizeof(context->PreviewFilter));
+#ifdef SOFPLAY_STEREO_TRIAL
+        RtlZeroMemory(&context->PreviewLeftFilter, sizeof(context->PreviewLeftFilter));
+#endif
 #endif
         *Bytes = SOFPROBE_TONE_BYTES;
         status = STATUS_SUCCESS;
@@ -345,8 +351,13 @@ static VOID SofRightPreviewCopy(PSOFPROBE_DEVICE_CONTEXT c, UCHAR *dst, const UC
     for (i = 0; i < bytes; i += 8) {
         LONG samples[2], result[2];
         RtlCopyMemory(samples, src + i, 8);
+#ifdef SOFPLAY_STEREO_TRIAL
+        result[0] = SofRightPreviewSample(&c->PreviewLeftFilter, samples[0], samples[0]);
+        result[1] = SofRightPreviewSample(&c->PreviewFilter, samples[1], samples[1]);
+#else
         result[0] = 0;
         result[1] = SofRightPreviewSample(&c->PreviewFilter, samples[0], samples[1]);
+#endif
         RtlCopyMemory(dst + i, result, 8);
     }
 }

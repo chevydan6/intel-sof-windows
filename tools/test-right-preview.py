@@ -64,6 +64,9 @@ typedef struct Context {
     SOF_RIGHT_PREVIEW_DIAGNOSTICS PreviewDiagnostics;
     ULONG AcxObservedPosition, AcxObservedStatus, AcxBoundaryReads, AcxCompletionReads;
     SOF_RIGHT_FILTER PreviewFilter;
+#ifdef SOFPLAY_STEREO_TRIAL
+    SOF_RIGHT_FILTER PreviewLeftFilter;
+#endif
     int AcxPowerLock, AcxBufferLock;
     struct Context *PreviewTimer;
     void *PreviewAmp;
@@ -183,7 +186,11 @@ int main(void) {
     for(int fault=0;fault<6;fault++) {
         c=reset(1); begin(&c); tick(&c,20,7680); assert(ampOn);
         if(fault==1) badDma=1;
+#ifdef SOFPLAY_STEREO_TRIAL
+        if(fault==2) ring[0]=SOF_RIGHT_PREVIEW_PEAK+1;
+#else
         if(fault==2) ring[0]=1;
+#endif
         if(fault==3) ring[1]=SOF_RIGHT_PREVIEW_PEAK+1;
         if(fault==4) c.ToneTriggerActive=0;
         if(fault==5) ring[1]=-SOF_RIGHT_PREVIEW_PEAK-1;
@@ -227,8 +234,28 @@ int main(void) {
         SofRightPreviewCopy(&b,(UCHAR*)(split+i),(UCHAR*)(input+i),8);
     assert(!memcmp(whole,split,sizeof(whole)));
     for(unsigned i=0;i<4096;i+=2) {
-        assert(whole[i]==0 && whole[i+1]<=SOF_RIGHT_PREVIEW_PEAK && whole[i+1]>=-SOF_RIGHT_PREVIEW_PEAK);
+#ifdef SOFPLAY_STEREO_TRIAL
+        assert(whole[i]<=SOF_RIGHT_PREVIEW_PEAK && whole[i]>=-SOF_RIGHT_PREVIEW_PEAK);
+#else
+        assert(whole[i]==0);
+#endif
+        assert(whole[i+1]<=SOF_RIGHT_PREVIEW_PEAK && whole[i+1]>=-SOF_RIGHT_PREVIEW_PEAK);
     }
+#ifdef SOFPLAY_STEREO_TRIAL
+    // Separate filter histories preserve stereo and never feed the other channel.
+    Context stereo={0}; LONG frame[2]={1234567,0}, converted[2];
+    SofRightPreviewCopy(&stereo,(UCHAR*)converted,(UCHAR*)frame,8);
+    assert(converted[0]==1234567 && converted[1]==0);
+    memset(&stereo,0,sizeof(stereo));frame[0]=0;frame[1]=-7654321;
+    SofRightPreviewCopy(&stereo,(UCHAR*)converted,(UCHAR*)frame,8);
+    assert(converted[0]==0 && converted[1]==-7654321);
+    // Left-only audio must enable and renew the amplifier.
+    c=reset(1);ring[1]=0;ring[0]=1024;begin(&c);
+    for(unsigned i=0;i<30;i++) tick(&c,20,7680);
+    assert(ampOn && c.Preview.Phase==3 && !c.Preview.Error);
+    ring[0]=0;for(unsigned i=0;i<13;i++) tick(&c,20,7680);
+    assert(!ampOn && !c.Preview.Error);
+#endif
     SOF_RIGHT_FILTER f={0}; LONG v=0;
     for(unsigned i=0;i<48000;i++) v=SofRightPreviewSample(&f,INT32_MAX,INT32_MAX);
     assert(v==0); // Constant input must decay to silence.
@@ -243,9 +270,9 @@ with tempfile.TemporaryDirectory(prefix='sof-right-preview-') as td:
     p = Path(td)
     modes=source[source.index('#if defined(SOFPLAY_RIGHT_TRIAL)'):source.index('#endif')+6]
     (p/'test.c').write_text(c.replace('/* PREVIEW_AMP_MODES */',modes))
-    for flags in ([], ['-DSOFPLAY_RIGHT_PREVIEW_LONG=1'], ['-DSOFPLAY_RIGHT_PREVIEW_30=1'], ['-DSOFPLAY_RIGHT_TRIAL=1']):
+    for flags in ([], ['-DSOFPLAY_RIGHT_PREVIEW_LONG=1'], ['-DSOFPLAY_RIGHT_PREVIEW_30=1'], ['-DSOFPLAY_RIGHT_TRIAL=1'], ['-DSOFPLAY_RIGHT_TRIAL=1','-DSOFPLAY_STEREO_TRIAL=1']):
       subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',*flags,
                     '-fsanitize=address,undefined','-fno-omit-frame-pointer',
                     '-I',str(root/'driver/speaker'),str(p/'test.c'),'-o',str(p/'test')],check=True)
       subprocess.run([str(p/'test')],check=True)
-print('PASS: right-only PCM, DC rejection, peak ceiling, bounded streaming, stalled DMA, late callbacks, failed amp I/O, and cleanup')
+print('PASS: stereo and right-only PCM, DC rejection, peak ceiling, bounded streaming, stalled DMA, late callbacks, failed amp I/O, and cleanup')

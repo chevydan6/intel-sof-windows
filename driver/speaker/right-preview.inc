@@ -141,9 +141,18 @@ static VOID SofRightPreviewTick(WDFTIMER timer)
         c->PreviewDiagnostics.ObservedPositionHigh = (ULONG)(position >> 32);
         for (i = 0; i < SOFPROBE_TONE_BYTES / sizeof(LONG); i += 2) {
 #ifdef SOFPLAY_RIGHT_TRIAL
+#ifdef SOFPLAY_STEREO_TRIAL
+            if (samples[i] != 0 || samples[i+1] != 0) audible = TRUE;
+#else
             if (samples[i+1] != 0) audible = TRUE;
 #endif
-            if (samples[i] != 0 || samples[i+1] > SOF_RIGHT_PREVIEW_PEAK ||
+#endif
+#ifdef SOFPLAY_STEREO_TRIAL
+            if (samples[i] > SOF_RIGHT_PREVIEW_PEAK || samples[i] < -SOF_RIGHT_PREVIEW_PEAK ||
+#else
+            if (samples[i] != 0 ||
+#endif
+                samples[i+1] > SOF_RIGHT_PREVIEW_PEAK ||
                 samples[i+1] < -SOF_RIGHT_PREVIEW_PEAK) {
                 c->PreviewDiagnostics.Reason = SofRightInvalidPcm;
                 status = STATUS_DATA_ERROR; break;
