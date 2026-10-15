@@ -40,6 +40,10 @@ The [firmware boot path](docs/n100-firmware-boot-plan.md) is mapped, the [IPC3 f
 
 The [ACX playback investigation](docs/n100-acx-playback-test.md) now records successful Windows format negotiation and a three-second WAV transfer (301 packets submitted and completed), after correcting packet-buffer alignment and preparing SOF before starting Windows audio services. Audible confirmation of that app test is pending; the earlier [hardware tone](docs/n100-speaker-tone-test.md) was heard. The [automatic startup work](docs/n100-acx-autostart-test.md) moves firmware and speaker setup into the driver and resets PCM between streams. Interrupt-driven IPC service, general topology support, and comprehensive power recovery remain unfinished.
 
+The verified 0 dB right-speaker configuration is preserved as a downloadable
+[test-signed prerelease](https://github.com/chevydan6/windows-sof/releases/tag/v0.1.0-rc.1).
+See [package contents and Microsoft signing](docs/driver-release-and-signing.md).
+
 ## Why a host driver is needed
 
 SOF firmware runs on the audio DSP. A Windows host driver must claim the PCI
