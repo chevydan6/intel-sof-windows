@@ -7,26 +7,33 @@ hardware compatibility remain unqualified.
 
 ## Published package
 
-The v0.1.0-rc.1 prerelease preserves the exact installed audio and amplifier
-packages, exported through PnPUtil. The audio source is 8a3bbfe (build
-38695073543); amplifier source is c909fda (build 38664599689).
-The matching complete source archive accompanies the binary package.
-These binaries are test-signed WDK builds, not Microsoft-signed production
-drivers. The package is for the reviewed PUJJOTEEN N100 board and is not a
-generic Intel N100 audio driver.
+The public v0.1.0-rc.2 prerelease enables BOTH speaker channels at 0 dB.
+It preserves stereo input with independent left/right DC-filter histories.
+The right-only variant is a local workaround for the owner's laptop and is
+not included in the public binary download. That laptop remains on oem70.inf;
+the stereo release has not been installed there.
 
-Audio package: sofplay, version 6.52.50.105, installed as oem70.inf.
-Amplifier package: sofamp, version 1.15.12.359, installed as oem65.inf.
-The release includes the GPL-2.0 license and SHA-256 checksums. It includes
-no private keys or machine-specific diagnostic recordings.
+Stereo audio source: 50a1af0, build 38695927767, StereoTrial=true.
+Amplifier source: c909fda, build 38664599689, version 1.15.12.359.
+WDK compilation, independent INF checks and production-code tests passed.
+The tests cover both-channel conversion, channel isolation, split-packet filter
+continuity, left-only activity, silence shutoff and amplifier fault handling.
+Stereo physical playback and sleep/resume have not been validated on hardware.
+The earlier owner feedback applies to the separate right-only build.
 
-The current laptop already has both packages installed and needs no update.
+The complete source archive accompanies the binary package. These are
+WDK test-signed builds, not Microsoft-signed production drivers. The package
+is for the reviewed PUJJOTEEN N100 board, not generic Intel N100 hardware.
+It includes the GPL-2.0 license and SHA-256 checksums, with no private keys
+or machine-specific recordings. The mistaken right-only public package was
+withdrawn when the owner clarified the distribution requirements.
+
 A fresh installation additionally needs the exact SOF IPC3 firmware at
 C:\Windows\System32\drivers\sof-adl-n-ipc3.ri, SHA-256
 8433390e4abfe40b251ff3dec41604e7b817501d1097d51aa2f51c11444d3bf0
-(525056 bytes). Third-party firmware is not included in this release.
-This is a preservation/update package, not an automated clean-install kit.
-Headphone switching and a Windows microphone endpoint are not included.
+(525056 bytes). Third-party firmware is not included. This is a development
+package, not an automated clean-install kit. Headphone switching and a Windows
+microphone endpoint are not included.
 
 ## Exit Windows test mode
 
