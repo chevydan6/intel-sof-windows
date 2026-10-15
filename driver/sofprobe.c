@@ -3298,7 +3298,7 @@ SofProbeEvtIoDeviceControl(
 #endif
         acx->SpeakerAttenuationCentiDb = SOFPLAY_SPEAKER_ATTENUATION_CENTIDB;
 #ifdef SOFPLAY_RIGHT_TRIAL
-        acx->SpeakerAttenuationCentiDb = 600;
+        acx->SpeakerAttenuationCentiDb = 0;
 #endif
 #if defined(SOFPLAY_RIGHT_PREVIEW) && !defined(SOFPLAY_RIGHT_TRIAL)
         acx->SpeakerAttenuationCentiDb = 1204;

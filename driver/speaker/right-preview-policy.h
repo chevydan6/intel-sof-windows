@@ -12,8 +12,9 @@
 #endif
 #define SOF_RIGHT_PREVIEW_GAP_MS 80ULL
 #ifdef SOFPLAY_RIGHT_TRIAL
-// User-requested trial level: -6 dB (16423/32768), +3 dB over board curve.
-#define SOF_RIGHT_PREVIEW_PEAK 1076297727L
+// User-requested trial level: 0 dB (unity), +9 dB over board curve.
+// Reserve one positive S32 LSB for symmetric saturation checks.
+#define SOF_RIGHT_PREVIEW_PEAK 2147483646L
 #else
 #define SOF_RIGHT_PREVIEW_PEAK 536870911L
 #endif
@@ -26,7 +27,7 @@ static __inline LONG SofRightPreviewSample(SOF_RIGHT_FILTER *filter, LONG left, 
     // Mono preserves content from either application channel; the physical
     // left slot is always zero. Widen before summing and scaling.
 #ifdef SOFPLAY_RIGHT_TRIAL
-    LONG input = (LONG)((((LONGLONG)left + right) * 16423) / 65536);
+    LONG input = (LONG)(((LONGLONG)left + right) / 2);
 #else
     LONG input = (LONG)(((LONGLONG)left + right) / 8);
 #endif
