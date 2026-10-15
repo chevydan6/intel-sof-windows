@@ -8,6 +8,12 @@ with source on the `feature/acx-speaker` branch. This default branch retains
 the earlier hardware baseline and diagnostic tooling. The experimental release
 targets the Lenovo 14e Chromebook Gen 3 and requires test-signing mode.
 
+**Lenovo 14e Chromebook Gen 3:** see the model-specific
+[Lenovo 14e Intel SOF Windows fork](https://github.com/chevydan6/lenovo-14e-sof-windows)
+for Lenovo integration and experimental open-source speaker processing.
+It shares this repository’s history; Windows audio-effect integration
+is still under development.
+
 The development probe builds with the WDK in Windows CI and its generated INF
 passes a separate x64 `InfVerif /w` check. It read the controller's resources,
 [capability chain](docs/n100-capability-chain-test.md), and
