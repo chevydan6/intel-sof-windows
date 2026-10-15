@@ -132,3 +132,25 @@ running. These checks establish the active setting and transport, not acoustic
 loudness or speaker temperature. Listening feedback remains pending.
 Private package and installation scripts are under
 `build/speaker-repair/gain-minus6-609073b/`.
+
+
+## Requested unity output — 2026-10-15
+
+At the user's explicit request, source `8a3bbfe` changes the normal-use
+right-speaker trial from -6 dB to 0 dB. Stereo averaging now divides the
+widened sum by two, with symmetric saturation at 2,147,483,646 (one positive
+S32 LSB below full scale). This is 6 dB above the previous trial and 9 dB
+above the documented board curve. Other modes retain their existing scaling.
+Status reports zero attenuation. The DC filter, channel isolation and amplifier
+lifecycle protections remain. All six local checks passed, including updated
+positive/negative saturation checks. ACX WDK build, tests and INF verification
+passed in [run 38695073543](https://github.com/chevydan6/windows-sof/actions/runs/38695073543).
+
+Installed as oem70.inf, version 6.52.50.105, without reboot; previous package
+is oem69.inf. Live status verified zero driver attenuation, successful startup,
+active ordinary application playback, 695 submitted packets, zero late packets,
+zero callback failures, and zero amplifier faults/watchdog trips. The endpoint
+is 0 dB/unmuted; audio services are running and the keyboard device reports OK.
+Acoustic quality and temperature have not been measured at this setting.
+Package, hashes and installation scripts are retained privately under
+`build/speaker-repair/gain-zero-8a3bbfe/`.
