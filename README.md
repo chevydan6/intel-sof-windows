@@ -1,10 +1,12 @@
-# Windows SOF host driver (Alder Lake-N first)
+# Intel SOF Audio Driver for Windows
 
 Open-source Windows host-driver development for Intel Sound Open Firmware (SOF).
 The first target is an Intel N100 laptop with a PCI audio controller at
 `8086:54c8` and an I2C Realtek RT5682 codec (`ACPI\10EC5682`). This repository
-currently contains the verified hardware baseline and diagnostic tooling; it
-does **not** yet contain an installable audio driver.
+has a [test-signed stereo driver prerelease](https://github.com/chevydan6/intel-sof-windows/releases/tag/v0.1.0-rc.2)
+with source on the `feature/acx-speaker` branch. This default branch retains
+the earlier hardware baseline and diagnostic tooling. The experimental release
+targets the Lenovo 14e Chromebook Gen 3 and requires test-signing mode.
 
 The development probe builds with the WDK in Windows CI and its generated INF
 passes a separate x64 `InfVerif /w` check. It read the controller's resources,
